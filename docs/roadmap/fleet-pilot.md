@@ -10,6 +10,35 @@ Status: **planned**. This is the first fleet milestone, not production release a
 
 The Dashboard and controller run separately from the gateway binary, but all three are delivered from this repository. The traffic ingress stays in the forwarding path; the controller changes policy, never handles the live stream. This milestone does not depend on browser/web-cookie, media, every provider, or advanced UI.
 
+## Local configuration readback
+
+This development step tests revision readback on one host. It does not
+publish configuration from the Dashboard, change existing routes, or connect
+to any model provider. The node reports the active local configuration
+revision in its authenticated `/admin/v1/status`; until inference is wired, it
+still reports `ready: false`, and `/v1/models` remains empty. A node started
+without a configuration reports `applied_revision: null`.
+
+Pass `-config /path/to/node.json` to opt in. For example:
+
+```json
+{"schema_version":1,"revision":"pilot-001","providers":[{"id":"synthetic","transport":"chat","models":[{"id":"demo"}]}]}
+```
+
+The file is local metadata (JSON, up to 1 MiB), not the full runtime
+configuration. It must not contain credentials or upstream URLs. Keep it
+in a directory controlled by the operator. Start with a valid file. To change it, write a complete replacement alongside the old file,
+rename it atomically over the configured path, then send `SIGHUP` to that
+node on Unix. Wait for readback before sending another signal; pending
+reload signals can coalesce. Use a new revision for each content change,
+including a rollback to an older payload. Re-reading identical bytes for the active revision is a no-op.
+The process rejects reused labels and limits history to 1,024 accepted
+revisions; history does not survive restart. An invalid update keeps the
+active revision. Check the authenticated status or the local Dashboard
+afterward. Dashboard matching here compares revision labels, not payload
+bytes across nodes. Seeing an applied revision does not mean the node can
+serve inference.
+
 ## Acceptance
 
 - Add one model in the Dashboard once. Both eligible nodes confirm applying the same revision and serve the intended model. If one node rejects the change, show intended versus applied revision, error and stale telemetry status. Exclude incompatible nodes from new traffic for the affected route without unnecessarily removing healthy unrelated routes.
