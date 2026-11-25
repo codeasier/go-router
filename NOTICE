@@ -1,0 +1,9 @@
+go-router is an independent Go implementation of behavior inspired by 9router.
+
+9router
+Copyright (c) 2024-2026 decolua and contributors
+Licensed under the MIT License
+https://github.com/decolua/9router
+
+go-router does not include or redistribute 9router source code. Provider
+behavior and client protocol compatibility were reimplemented in Go.
