@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gateway fleet | go-router</title>
+</head>
+<body>
+<main>
+  <h1>Gateway fleet</h1>
+  <p>Read-only controller view. Offline means the last check failed; stale means the last observation is too old. Neither verifies the current revision.</p>
+  {{if .}}
+  <table>
+    <caption>Status of registered gateways</caption>
+    <thead><tr><th scope="col">Node</th><th scope="col">Observation</th><th scope="col">Desired revision</th><th scope="col">Last observed applied revision</th><th scope="col">Revision comparison</th><th scope="col">Last observed (UTC)</th></tr></thead>
+    <tbody>
+      {{range .}}<tr><th scope="row">{{.Node}}</th><td>{{.Observation}}</td><td>{{if .Desired}}{{.Desired}}{{else}}Unknown{{end}}</td><td>{{if .Applied}}{{.Applied}}{{else}}Unknown{{end}}</td><td>{{.Comparison}}</td><td>{{if .Seen}}<time datetime="{{.Seen}}">{{.Seen}}</time>{{else}}Never verified{{end}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}<p>No gateways registered.</p>{{end}}
+</main>
+</body>
+</html>
