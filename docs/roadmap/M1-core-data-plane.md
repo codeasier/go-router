@@ -27,6 +27,7 @@ Scope:
 - Service API-key authentication for ingress.
 - Request IDs, body limits, and rate limits.
 - `/healthz` and readiness endpoints.
+- Define stable node identity, capability inventory and applied configuration revision for the [fleet pilot](fleet-pilot.md).
 - Graceful shutdown with bounded drain.
 
 Acceptance criteria:
@@ -57,7 +58,7 @@ Acceptance criteria:
 Scope:
 
 - Single upstream transport boundary for inference calls.
-- Durable dispatch intent before sending.
+- Durable dispatch intent before sending. Implement the minimal journal in M1; M3 owns the broader schema, imports and repositories. Test recovery after an ambiguous dispatch without automatic replay.
 - Attempt record with provider, model, connection, operation type, and body digest.
 - Retry classes: `NOT_SENT`, `REJECTED_WITHOUT_EXECUTION`, `EXECUTED`, `UNKNOWN`.
 - Cancellation propagation and context deadlines.
@@ -109,7 +110,7 @@ Acceptance criteria:
 
 Scope:
 
-- `httptest` upstream simulator with scripted SSE and JSON responses.
+- Begin the reusable `httptest` upstream simulator and critical golden fixtures alongside M1.3/M1.4; complete the expanded provider matrix and benchmark report after M1.5.
 - Golden fixtures for each M1 provider and client protocol.
 - Benchmark harness: startup, idle RSS, binary size, p99 overhead, SSE TTFB, throughput, concurrent streams.
 - Comparison against the current 9router JS baseline on the same host.

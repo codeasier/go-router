@@ -4,22 +4,24 @@ Status: **planned**.
 
 ## Objective
 
-Complete the product surface, prove parity and load behavior, and release a documented candidate with cutover and rollback procedures.
+Expand the product surface after the [two-instance operations pilot](fleet-pilot.md), prove full-scope parity and load behavior, and ship the expanded release with documented cutover and rollback.
+
+The **core v1 release candidate** is a separate gate defined in [GOALS.md](../GOALS.md#5-success-criteria): Phase 1 parity, the two-instance pilot, seven-day soak, security review, and staged cutover and rollback rehearsal, along with the other core criteria. Run those checks on core scope without waiting for M4 or the expanded Dashboard. The M4 dependencies below apply to validation of the expanded release, not to core qualification.
 
 ## Issues
 
 | Issue | Title | Depends on |
 |---|---|---|
-| M5.1 | Dashboard ADR and MVP | M3.3 |
+| M5.1 | Expand the Dashboard beyond the fleet pilot | Fleet pilot, M3.3 |
 | M5.2 | Full parity suite against 9router | M2, M4 |
 | M5.3 | 7-day soak and load test | M2, M3, M4 |
 | M5.4 | Cutover/rollback runbook and release | M5.1–M5.3 |
 
-## M5.1 — Dashboard ADR and MVP
+## M5.1 — Expand the Dashboard beyond the fleet pilot
 
 Scope:
 
-- Choose the dashboard technology and authentication model.
+- Extend the separately deployed Dashboard and control API established in the pilot. The pilot chooses its initial technology and authentication, not M5.
 - Provider/connection status, usage summaries, and request diagnostics.
 - Secret-safe views; no decrypted credentials in the browser.
 - Migration/import status.
@@ -74,10 +76,10 @@ Acceptance criteria:
 - Runbook is tested on a staging deployment.
 - Rollback is verified.
 - Release artifacts are signed/checksummed and reproducible.
-- GOALS success criteria are met or explicitly waived.
+- The core release criteria in [GOALS.md](../GOALS.md#5-success-criteria) remain satisfied, and the expanded release meets the additional M5 criteria.
 
 ## Exit criteria
 
-- All success criteria in `docs/GOALS.md` are met or documented.
+- All core release gates remain satisfied; parity, soak and staged rollback are verified for the expanded scope.
 - Release notes and known limitations are published.
 - Cutover and rollback are proven.
