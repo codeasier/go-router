@@ -3,6 +3,7 @@
 package testupstream
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,7 @@ type Upstream struct {
 
 // Start creates a fresh upstream and an instrumented HTTP client. Use Client
 // for the gateway's upstream transport when testing response-body ownership.
+// Its transport refuses requests to any origin other than this fixture.
 func Start(t testing.TB, mode Mode) *Upstream {
 	t.Helper()
 	if mode < Completion || mode > WaitForCancel {
@@ -102,7 +104,11 @@ func Start(t testing.TB, mode Mode) *Upstream {
 		}
 	}))
 	u.URL = s.URL
-	u.Client = &http.Client{Transport: &trackingTransport{base: s.Client().Transport, open: &u.open}}
+	u.Client = &http.Client{Transport: &trackingTransport{
+		base: s.Client().Transport,
+		host: s.Listener.Addr().String(),
+		open: &u.open,
+	}}
 	t.Cleanup(func() {
 		s.CloseClientConnections()
 		s.Close()
@@ -123,10 +129,20 @@ func (u *Upstream) OpenBodies() int64 { return u.open.Load() }
 
 type trackingTransport struct {
 	base http.RoundTripper
+	host string
 	open *atomic.Int64
 }
 
 func (t *trackingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	// A gateway test can pass its configured endpoint to this client. Reject
+	// a stale or non-fixture endpoint before the transport can make any call.
+	if r.URL == nil || r.URL.Scheme != "http" || r.URL.Host != t.host || r.URL.Opaque != "" {
+		if r.Body != nil {
+			r.Body.Close()
+		}
+		return nil, errors.New("testupstream: request is outside the fixture origin")
+	}
+
 	res, err := t.base.RoundTrip(r)
 	if err == nil {
 		t.open.Add(1)

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,4 +199,49 @@ func TestCancelPropagatesButDoesNotCountAsBodyClose(t *testing.T) {
 		t.Fatalf("want client cancellation without terminal frame, got %q, %v", tail, err)
 	}
 	closeBody(t, u, res)
+}
+
+type requestBodyProbe struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+func (p *requestBodyProbe) Close() error {
+	p.closed.Store(true)
+	return nil
+}
+
+func TestClientOnlyReachesItsFixture(t *testing.T) {
+	u := testupstream.Start(t, testupstream.Completion)
+	u.Client.Timeout = 10 * time.Second
+	var otherRequests atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otherRequests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(other.Close)
+
+	for _, endpoint := range []string{other.URL, "https://" + strings.TrimPrefix(u.URL, "http://")} {
+		body := &requestBodyProbe{Reader: strings.NewReader(requestBody)}
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint+"/v1/chat/completions", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := u.Client.Do(req)
+		if res != nil {
+			res.Body.Close()
+			t.Fatalf("non-fixture request returned HTTP %d", res.StatusCode)
+		}
+		if err == nil || !strings.Contains(err.Error(), "outside the fixture origin") {
+			t.Fatalf("want explicit fixture-origin refusal, got %v", err)
+		}
+		if !body.closed.Load() {
+			t.Fatal("rejected request body not closed")
+		}
+	}
+	if otherRequests.Load() != 0 || u.Requests() != 0 || u.OpenBodies() != 0 {
+		t.Fatal("non-fixture request reached a server or affected fixture counts")
+	}
+
+	closeBody(t, u, request(t, u, t.Context(), false))
 }
