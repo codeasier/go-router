@@ -70,6 +70,7 @@ Every issue must satisfy:
 
 - GitHub milestones: `M0` … `M5`.
 - Labels: `kind:*`, `area:*`, `priority:*`.
+- Offline issue map: [roadmap/ISSUES.md](roadmap/ISSUES.md).
 - Each milestone document lists its issues and acceptance criteria. GitHub issues are the source of truth for status; the docs are the plan.
 
 ## Risk register
