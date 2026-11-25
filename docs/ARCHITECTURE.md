@@ -1,6 +1,6 @@
 # go-router Architecture
 
-Status: **M0 — initial design**. Implementation package names and interfaces may change through an ADR.
+Status: **M0 complete; M1 next**. Implementation package names and interfaces may change through an ADR.
 
 ## 1. High-level shape
 
@@ -32,7 +32,9 @@ upstream provider
 client
 ```
 
-The JS 9router engine remains the reference implementation and the fallback for out-of-scope providers. go-router is a separate process on a separate port.
+The JS 9router engine remains the reference implementation and the fallback for out-of-scope providers. go-router runs separately from 9router.
+
+The Dashboard and fleet controller are hosted in this repository but deployed separately from gateway nodes. Inference never traverses either. Nodes expose a separately authenticated management surface for stable identity, capabilities, health, applied revision and telemetry. The controller validates and reconciles versioned desired configuration and manages ingress policy through a separate adapter. See [ADR 0003](adr/0003-fleet-control-plane.md).
 
 ## 2. Packages
 
@@ -154,5 +156,5 @@ Open decision: pure-Go `modernc.org/sqlite` for a single static binary versus CG
 - Config format and secret provider.
 - Admin API surface and authentication.
 - Browser automation approach for Phase 2.
-- Dashboard architecture for Phase 3.
+- Dashboard runtime, management authentication, and ingress adapter details for the first fleet pilot.
 - Whether to reuse the 9router provider catalog JSON or generate a Go-native catalog.

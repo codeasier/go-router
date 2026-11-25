@@ -6,7 +6,7 @@ This roadmap is the execution plan for [GOALS.md](GOALS.md) and [PORTING.md](POR
 
 ## Principles
 
-1. Data plane first: a usable `/v1` gateway before dashboard or browser automation.
+1. Data plane first, with fleet operation interfaces defined alongside M1. The first two-instance pilot includes a minimal Dashboard; browser automation is later.
 2. No silent retries: execution facts are part of the design, not an afterthought.
 3. Benchmark-driven: every performance claim has a reproducible command and a 9router baseline.
 4. Small PRs: one issue, one PR, one reviewable change; no mixed refactors.
@@ -22,7 +22,7 @@ This roadmap is the execution plan for [GOALS.md](GOALS.md) and [PORTING.md](POR
 | M2 | OAuth providers + routing + protocol adapters | All Phase 1 providers pass protocol/cancellation/usage tests | [M2](roadmap/M2-oauth-routing.md) |
 | M3 | SQLite, admin API, observability, packaging | Import reproducible; security review; non-root container | [M3](roadmap/M3-persistence-ops.md) |
 | M4 | Browser/web-cookie providers + embeddings/media | Phase 2 tests pass with isolation; no bypass | [M4](roadmap/M4-phase2-data-plane.md) |
-| M5 | Dashboard, parity, soak, release | GOALS success criteria met; release notes published | [M5](roadmap/M5-dashboard-release.md) |
+| M5 | Advanced Dashboard, full parity, soak, release | Full release requirements met; release notes published | [M5](roadmap/M5-dashboard-release.md) |
 
 ## Dependency and critical path
 
@@ -40,10 +40,10 @@ M2 OAuth + routing
 M4 phase 2 data plane (browser/embeddings/media)
   |
   v
-M5 dashboard + parity + release
+M5 advanced dashboard + full parity + release
 ```
 
-M1 is the critical path. M3 can start once the config and registry interfaces stabilize. M2 should not block M3. M4 and M5 depend on the provider and execution contracts from M1/M2.
+M1 remains the critical path for the proxy. In parallel, define the [versioned management contract and two-instance pilot](roadmap/fleet-pilot.md). A minimal Dashboard, rollback and safe ingress control are required for the pilot, not dependent on M4 or on M5 advanced UI. M3 storage work can begin once required interfaces stabilize. The minimal durable attempt journal must exist before M1 sends inference; the rest of SQLite/admin/import remains in M3. Existing GitHub issue numbers remain unchanged; the pilot document defines the cross-milestone scope.
 
 ## Cross-cutting workstreams
 

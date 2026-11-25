@@ -1,6 +1,6 @@
 # ADR 0002: v1 scope — data plane plus HTTP/OAuth providers first
 
-- Status: Accepted
+- Status: Accepted; Dashboard timing and repository ownership updated by [ADR 0003](0003-fleet-control-plane.md).
 - Date: 2026-11-25
 
 ## Context

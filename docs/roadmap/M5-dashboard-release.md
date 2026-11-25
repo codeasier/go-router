@@ -4,22 +4,22 @@ Status: **planned**.
 
 ## Objective
 
-Complete the product surface, prove parity and load behavior, and release a documented candidate with cutover and rollback procedures.
+Expand the product surface after the [two-instance operations pilot](fleet-pilot.md), prove full parity and load behavior, and release a documented candidate with cutover and rollback procedures.
 
 ## Issues
 
 | Issue | Title | Depends on |
 |---|---|---|
-| M5.1 | Dashboard ADR and MVP | M3.3 |
+| M5.1 | Expand the Dashboard beyond the fleet pilot | Fleet pilot, M3.3 |
 | M5.2 | Full parity suite against 9router | M2, M4 |
 | M5.3 | 7-day soak and load test | M2, M3, M4 |
 | M5.4 | Cutover/rollback runbook and release | M5.1–M5.3 |
 
-## M5.1 — Dashboard ADR and MVP
+## M5.1 — Expand the Dashboard beyond the fleet pilot
 
 Scope:
 
-- Choose the dashboard technology and authentication model.
+- Extend the separately deployed Dashboard and control API established in the pilot. The pilot chooses its initial technology and authentication, not M5.
 - Provider/connection status, usage summaries, and request diagnostics.
 - Secret-safe views; no decrypted credentials in the browser.
 - Migration/import status.

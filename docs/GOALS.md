@@ -1,10 +1,10 @@
 # go-router Goals
 
-Status: **M0 — initialization**. This document is the v1 contract. Change it only through an ADR.
+Status: **M0 complete; M1 next**. This document is the v1 contract. The fleet operations decision is recorded in [ADR 0003](adr/0003-fleet-control-plane.md).
 
 ## 1. Vision
 
-go-router is a high-performance, single-binary AI gateway that replaces the 9router connector data plane for the providers we actually use. It must be a drop-in for existing clients, while making execution facts explicit: what was dispatched, what may have executed, what was retried, and what is safe to retry.
+go-router is a lightweight AI gateway designed to replace in-scope 9router traffic while eliminating duplicated multi-instance operations. One separately deployed Dashboard and control plane, hosted in this repository, manage a fleet of light gateway nodes. It must be a drop-in for existing clients, while making execution facts explicit: what was dispatched, what may have executed, what was retried, and what is safe to retry.
 
 ## 2. Language decision
 
@@ -61,12 +61,16 @@ Every performance claim must include the benchmark command, host, Go version, up
 
 Acceptance criteria:
 
-- One static binary; no Node.js runtime.
+- One static binary per gateway node; no Node.js runtime on the node. The Dashboard/control plane is deployed separately.
 - Configuration from file + environment variables; secrets may be supplied by file or env and are never printed by config export.
 - Structured JSON logs, Prometheus metrics, pprof (opt-in), health endpoints.
 - Graceful shutdown with bounded drain.
 - Docker image and systemd example.
 - Linux/amd64, Linux/arm64, macOS/arm64 builds.
+
+### G4a. Unified fleet operations
+
+Acceptance criteria: register two nodes; publish a model change once and read back each node's applied revision; show partial failures; aggregate usage and deduplicate shared-account quota; manage traffic eligibility, weight and drain through the ingress; restore a previous configuration revision. Nodes keep serving the last valid local configuration when management is unavailable. See the [two-instance pilot](roadmap/fleet-pilot.md).
 
 ### G5. Security
 
@@ -121,7 +125,7 @@ OAuth / specialized HTTP:
 
 ### Out of scope for v1
 
-- Dashboard UI.
+- Advanced Dashboard features beyond the two-instance operations pilot.
 - Providers not listed above. They remain on the existing 9router deployment and must not receive new connector acceptance work.
 - Test fixtures and stale connections (`kimchi-nope`, bulk `openai-compatible-*` test rows).
 - Async provider task APIs, video generation, and background task polling.
@@ -140,6 +144,7 @@ A v1 release candidate is ready only when:
 5. Graceful shutdown, cancellation, and credential rotation pass fault-injection tests.
 6. Migration from a 9router SQLite snapshot is documented and tested read-only.
 7. Security review finds no secret leakage in logs, metrics, API responses, or error paths.
+8. The two-instance fleet pilot passes its operations and recovery checks. Phase 2 providers and advanced UI are not prerequisites.
 
 ## 6. Constraints
 
@@ -155,5 +160,5 @@ A v1 release candidate is ready only when:
 - Configuration format: YAML versus TOML.
 - Admin API authentication and exposure model.
 - Browser automation approach for Phase 2: in-process CDP versus a sidecar.
-- Dashboard technology for Phase 3.
+- Dashboard technology and the versioned control protocol (see ADR 0003).
 - Final confirmation of G3 performance targets after the M1 benchmark.

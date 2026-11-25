@@ -1,8 +1,8 @@
 # go-router
 
-**Status: M0 — initialization.** Goals are defined in [docs/GOALS.md](docs/GOALS.md). The API is not implemented yet.
+**Status: M0 complete; M1 next.** The current binary has health and version endpoints and a placeholder model list; the proxy and unified Dashboard are not implemented yet.
 
-go-router is a high-performance, single-binary AI gateway written in Go. It is an independent reimplementation of the 9router connector data plane, focused on the providers and behavior that are actually used in production.
+go-router is a lightweight, multi-instance AI gateway written in Go. Lightweight gateway nodes proxy model requests; one separately running Dashboard and control plane manage multiple nodes. Both are developed in this repository. The gateway independently implements the in-scope 9router data-plane behavior.
 
 ## Why
 
@@ -18,12 +18,12 @@ The current 9router connector is a large JavaScript/TypeScript codebase. go-rout
 - OpenAI-compatible `/v1/chat/completions` (streaming and non-streaming), `/v1/models`, and the existing client protocol adapters used by the active providers.
 - Provider registry, API-key and OAuth connections, token refresh, routing/fallback/combo, usage accounting.
 - Phase 1 providers: HTTP/API-key and OAuth chat providers (see [docs/PORTING.md](docs/PORTING.md)).
-- Browser/web-cookie providers and the dashboard are later phases.
+- The [two-instance pilot](docs/roadmap/fleet-pilot.md) includes a minimal unified Dashboard for versioned model changes, node health, usage, quota and traffic controls. Browser/web-cookie and advanced Dashboard features are later.
 
 ## Non-goals (v1)
 
 - Browser automation / web-cookie providers such as `deepseek-web` (phase 2).
-- Dashboard UI (phase 3).
+- Full Dashboard feature parity or an embedded Dashboard on every gateway node.
 - Async provider task APIs, video generation, multi-node exactly-once budgets, and MITM.
 
 ## Quick start
@@ -38,6 +38,7 @@ curl http://127.0.0.1:20128/healthz
 - [Goals and success criteria](docs/GOALS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Two-instance operations pilot](docs/roadmap/fleet-pilot.md)
 - [Porting scope and invariants](docs/PORTING.md)
 - [ADRs](docs/adr/)
 
