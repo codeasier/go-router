@@ -18,6 +18,7 @@ type Server struct {
 func New(addr string) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("GET /readyz", handleReadyz)
 	mux.HandleFunc("GET /v1/models", handleModels)
 
 	return &Server{
