@@ -1,81 +1,91 @@
 # go-router Roadmap
 
-Status: **M0 — initialization**.
+Status: **M0 complete; M1 next**.
 
-Each milestone has an exit criterion. A milestone is not complete until its tests and documentation are committed.
+This roadmap is the execution plan for [GOALS.md](GOALS.md) and [PORTING.md](PORTING.md). It is tracked with GitHub milestones and issues. Each issue is a unit of reviewable work; a milestone closes only when its exit criteria and documentation are complete.
 
-## M0 — Initialization
+## Principles
 
-Deliverables:
+1. Data plane first: a usable `/v1` gateway before dashboard or browser automation.
+2. No silent retries: execution facts are part of the design, not an afterthought.
+3. Benchmark-driven: every performance claim has a reproducible command and a 9router baseline.
+4. Small PRs: one issue, one PR, one reviewable change; no mixed refactors.
+5. Public repo hygiene: synthetic fixtures only; no secrets, production data, or full request bodies.
+6. Backward compatibility: existing clients keep their protocols and error envelopes.
 
-- Public repository with goals, architecture, roadmap, porting scope, and ADRs.
-- Minimal Go module and buildable `go-router` binary.
-- `/healthz` endpoint, version metadata, graceful shutdown.
-- CI: format check, vet, test, build.
+## Milestone overview
 
-Exit criterion: `go test ./...`, `go vet ./...`, and `go build ./...` pass in CI; goals are reviewed and committed.
+| Milestone | Goal | Exit criterion | Detailed plan |
+|---|---|---|---|
+| M0 | Initialize repo, goals, architecture, ADRs, CI | CI green; goals reviewed | [M0](roadmap/M0-initialization.md) |
+| M1 | Core HTTP data plane + first API-key providers | Phase 1 API-key parity; benchmark report; no silent retries | [M1](roadmap/M1-core-data-plane.md) |
+| M2 | OAuth providers + routing + protocol adapters | All Phase 1 providers pass protocol/cancellation/usage tests | [M2](roadmap/M2-oauth-routing.md) |
+| M3 | SQLite, admin API, observability, packaging | Import reproducible; security review; non-root container | [M3](roadmap/M3-persistence-ops.md) |
+| M4 | Browser/web-cookie providers + embeddings/media | Phase 2 tests pass with isolation; no bypass | [M4](roadmap/M4-phase2-data-plane.md) |
+| M5 | Dashboard, parity, soak, release | GOALS success criteria met; release notes published | [M5](roadmap/M5-dashboard-release.md) |
 
-## M1 — Core HTTP data plane
+## Dependency and critical path
 
-Deliverables:
+```text
+M0 (done)
+  |
+  v
+M1 core data plane
+  |\
+  | +--> M3 persistence/admin/ops (after M1.1 and M1.2)
+  v
+M2 OAuth + routing
+  |
+  v
+M4 phase 2 data plane (browser/embeddings/media)
+  |
+  v
+M5 dashboard + parity + release
+```
 
-- Config loader and validation.
-- OpenAI-compatible `/v1/models` and `/v1/chat/completions`, streaming and non-streaming.
-- Dispatcher with dispatch intent, retry classes, cancellation, and bounded shutdown.
-- Provider adapter base and the first API-key/generic providers: `volceapi`, `openrouter`, `opencode-go`.
-- Request/attempt records and usage normalization.
-- Golden tests with `httptest` upstream simulators.
-- Benchmark harness and a baseline comparison against 9router.
+M1 is the critical path. M3 can start once the config and registry interfaces stabilize. M2 should not block M3. M4 and M5 depend on the provider and execution contracts from M1/M2.
 
-Exit criterion: Phase 1 API-key providers pass parity tests; benchmark report exists; no silent retry path.
+## Cross-cutting workstreams
 
-## M2 — OAuth providers and routing
+- **Performance**: benchmark harness in M1; continuous comparison in M2/M5; no optimization without a measured baseline.
+- **Reliability**: dispatch intent, retry classes, cancellation, crash/fault injection from M1 onward.
+- **Security**: secret redaction, SSRF, strict proxy, and a no-secrets review at M3 and before release.
+- **Documentation**: ADRs for irreversible decisions; a provider matrix per adapter; cutover runbook.
+- **Testing**: golden fixtures, upstream simulator, race detector, fuzz for parsers, parity suite.
 
-Deliverables:
+## Definition of Done
 
-- OAuth connection model and token refresh.
-- Providers: `codex`, `codex-backup`, `antigravity`, `cursor`, `grok-cli`, `minimax-code`, `trae`, `trae-enterprise`, `xai`.
-- Aliases, combos, fallback/account selection, request-scoped routing.
-- Protocol adapters for Anthropic Messages and OpenAI Responses for the supported routes.
-- Credential rotation save-before-use tests.
-- Golden parity tests for OAuth and specialized transports.
+Every issue must satisfy:
 
-Exit criterion: All Phase 1 providers pass streaming, non-streaming, tool, error, cancellation, and usage tests.
+- [ ] Acceptance criteria in the issue are met.
+- [ ] Unit/integration tests cover the new behavior; golden fixtures updated if protocol behavior changes.
+- [ ] `gofmt`, `go vet`, `go test -race ./...`, and `go build ./...` pass.
+- [ ] No secrets, production data, or full request/response bodies in code, tests, logs, or fixtures.
+- [ ] Execution semantics documented: what is dispatched, what may have executed, and what is retried.
+- [ ] Performance-affecting changes include a benchmark or a justification for not running one.
+- [ ] Documentation or ADR updated.
+- [ ] One PR linked to the issue; no mixed unrelated changes.
 
-## M3 — Persistence, admin API, operations
+## Issue tracking
 
-Deliverables:
+- GitHub milestones: `M0` … `M5`.
+- Labels: `kind:*`, `area:*`, `priority:*`.
+- Each milestone document lists its issues and acceptance criteria. GitHub issues are the source of truth for status; the docs are the plan.
 
-- SQLite store with schema and migrations (driver decision recorded in an ADR).
-- Read-only import from 9router SQLite: connections, aliases, combos, settings.
-- Minimal admin API for status, providers, connections, and usage summaries.
-- Prometheus metrics, structured logs, optional pprof.
-- Docker image and systemd example.
-- Graceful shutdown, health/readiness separation.
+## Risk register
 
-Exit criterion: Migration from a snapshot is reproducible; metrics and logs pass the no-secrets review; container image runs as non-root.
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Browser automation is complex and fragile | M4 delay | Keep it out of v1; ADR and isolation first |
+| OAuth/provider APIs drift | M2 parity failures | Golden fixtures; live smoke tests only with approved test accounts |
+| 9router and go-router diverge | Migration errors | Parity harness; dual-run; normalized comparisons |
+| Performance targets are wrong | Rework | M1 benchmark first; targets revised with evidence |
+| Secret leakage in a public repo | Security incident | Synthetic fixtures; redaction tests; review gate |
+| Scope creep from inactive providers | Missed milestones | In-scope list is explicit; out-of-scope stays on 9router |
 
-## M4 — Phase 2 data plane
+## Related documents
 
-Deliverables:
-
-- `deepseek-web` and other explicitly approved browser/web-cookie providers.
-- Browser automation approach (in-process CDP or sidecar) recorded in an ADR.
-- Custom embedding provider nodes.
-- Image/media endpoints for in-scope providers.
-- Fault-injection tests for browser processes, downloads, and cancellation.
-
-Exit criterion: Phase 2 provider tests pass with the approved browser/network isolation; no request bypasses the dispatcher.
-
-## M5 — Dashboard, parity, and release
-
-Deliverables:
-
-- Dashboard/admin UI (technology chosen by ADR).
-- Full parity suite against 9router for the supported surface.
-- 7-day soak test with concurrent SSE streams and zero leaks.
-- Security review: secrets, SSRF, proxy behavior, redaction.
-- Cutover and rollback runbook.
-- Release binaries and container images.
-
-Exit criterion: All success criteria in `docs/GOALS.md` are met; release notes and known limitations are published.
+- [Goals and success criteria](GOALS.md)
+- [Architecture](ARCHITECTURE.md)
+- [Porting scope and invariants](PORTING.md)
+- [ADR index](adr/)
