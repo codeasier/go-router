@@ -54,7 +54,7 @@ Scope:
 
 - Authenticated read/write endpoints for status, providers, connections, and usage summaries.
 - Secret-safe responses; write operations require explicit authorization.
-- No dashboard yet; API-first management.
+- Keep the M3 admin endpoints API-first. This does not defer the separately deployed [fleet-pilot Dashboard](fleet-pilot.md) or its initial management contract.
 
 Acceptance criteria:
 

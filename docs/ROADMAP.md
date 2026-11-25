@@ -22,28 +22,14 @@ This roadmap is the execution plan for [GOALS.md](GOALS.md) and [PORTING.md](POR
 | M2 | OAuth providers + routing + protocol adapters | All Phase 1 providers pass protocol/cancellation/usage tests | [M2](roadmap/M2-oauth-routing.md) |
 | M3 | SQLite, admin API, observability, packaging | Import reproducible; security review; non-root container | [M3](roadmap/M3-persistence-ops.md) |
 | M4 | Browser/web-cookie providers + embeddings/media | Phase 2 tests pass with isolation; no bypass | [M4](roadmap/M4-phase2-data-plane.md) |
-| M5 | Advanced Dashboard, full parity, soak, release | Full release requirements met; release notes published | [M5](roadmap/M5-dashboard-release.md) |
+| M5 | Full-scope release: advanced Dashboard, Phase 2 parity and soak | Expanded scope validated; release notes published | [M5](roadmap/M5-dashboard-release.md) |
 
 ## Dependency and critical path
 
-```text
-M0 (done)
-  |
-  v
-M1 core data plane
-  |\
-  | +--> M3 persistence/admin/ops (after M1.1 and M1.2)
-  v
-M2 OAuth + routing
-  |
-  v
-M4 phase 2 data plane (browser/embeddings/media)
-  |
-  v
-M5 advanced dashboard + full parity + release
-```
+- **Core v1 release candidate:** M1–M3 and the [two-instance operations pilot](roadmap/fleet-pilot.md). Apply the [core release gates](GOALS.md#5-success-criteria), including Phase 1 parity, a seven-day soak, security review and staging cutover/rollback. Neither M4 nor the expanded M5 Dashboard blocks this candidate.
+- **Full-scope M5 release:** M4 extends the M2 data plane with Phase 2 providers and capabilities. [M5](roadmap/M5-dashboard-release.md) expands the Dashboard and verifies parity, soak and rollback for the expanded scope without dropping the core gates.
 
-M1 remains the critical path for the proxy. In parallel, define the [versioned management contract and two-instance pilot](roadmap/fleet-pilot.md). A minimal Dashboard, rollback and safe ingress control are required for the pilot, not dependent on M4 or on M5 advanced UI. M3 storage work can begin once required interfaces stabilize. The minimal durable attempt journal must exist before M1 sends inference; the rest of SQLite/admin/import remains in M3. Existing GitHub issue numbers remain unchanged; the pilot document defines the cross-milestone scope.
+M1 remains the critical path for the proxy. In parallel, define the [versioned management contract and two-instance pilot](roadmap/fleet-pilot.md). A minimal Dashboard, rollback and safe ingress control are required for the pilot, not dependent on M4 or on M5 advanced UI. M3 storage work can begin once the M1.1 and M1.2 interfaces it needs stabilize. The minimal durable attempt journal must exist before M1 sends inference; the rest of SQLite/admin/import remains in M3. Existing GitHub issue numbers remain unchanged; the pilot document defines the cross-milestone scope.
 
 ## Cross-cutting workstreams
 

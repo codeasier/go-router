@@ -135,7 +135,7 @@ OAuth / specialized HTTP:
 
 ## 5. Success criteria
 
-A v1 release candidate is ready only when:
+A core v1 release candidate, covering Phase 1 providers and the two-instance operations pilot, is ready only when:
 
 1. All Phase 1 providers pass protocol parity tests for streaming, non-streaming, tools, errors, cancellation, and usage.
 2. No silent retry path exists in any Phase 1 provider adapter; the execution-fact test suite proves dispatch intent and settlement.
@@ -144,7 +144,10 @@ A v1 release candidate is ready only when:
 5. Graceful shutdown, cancellation, and credential rotation pass fault-injection tests.
 6. Migration from a 9router SQLite snapshot is documented and tested read-only.
 7. Security review finds no secret leakage in logs, metrics, API responses, or error paths.
-8. The two-instance fleet pilot passes its operations and recovery checks. Phase 2 providers and advanced UI are not prerequisites.
+8. The two-instance fleet pilot passes its operations and recovery checks.
+9. A staging dual-run verifies a staged traffic cutover and rollback to 9router. The runbook records the procedure and the evidence.
+
+Phase 2 providers and advanced UI are not prerequisites for the core v1 candidate. These belong to the later [full-scope M5 release](roadmap/M5-dashboard-release.md). Candidate readiness is not approval to cut over production.
 
 ## 6. Constraints
 

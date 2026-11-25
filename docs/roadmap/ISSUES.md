@@ -4,6 +4,8 @@ Status: generated from the GitHub milestones and issues on 2026-11-25.
 
 GitHub issues are the source of truth for status. This table maps each issue to its milestone and labels so the plan can be read offline.
 
+The #23 title is retained as recorded in this snapshot. In the current roadmap, [M5.1](M5-dashboard-release.md#m51--expand-the-dashboard-beyond-the-fleet-pilot) is the later Dashboard expansion; the minimal Dashboard belongs to the earlier [two-instance pilot](fleet-pilot.md) and does not wait for #23.
+
 | Issue | Milestone | Title | Labels |
 |---|---|---|---|
 | [#1](https://github.com/codeasier/go-router/issues/1) | M0 — Initialization | M0: initialize repository, goals, architecture, ADRs, and CI | `kind:task`, `area:core`, `priority:p0` |

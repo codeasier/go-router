@@ -1,6 +1,6 @@
 # go-router
 
-**Status: M0 complete; M1 next.** The current binary has health and version endpoints and a placeholder model list; the proxy and unified Dashboard are not implemented yet.
+**Status: M0 complete; M1 next.** The binary exposes version metadata at `/healthz` and through the `-version` CLI flag, and serves a placeholder model list. The proxy and unified Dashboard are not implemented yet.
 
 go-router is a lightweight, multi-instance AI gateway written in Go. Lightweight gateway nodes proxy model requests; one separately running Dashboard and control plane manage multiple nodes. Both are developed in this repository. The gateway independently implements the in-scope 9router data-plane behavior.
 
