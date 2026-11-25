@@ -104,3 +104,26 @@ func TestDataPlaneReadinessAndIsolation(t *testing.T) {
 		t.Errorf("inference listener serves management: HTTP %d", rec.Code)
 	}
 }
+
+func TestAppliedRevisionOnlyInAuthenticatedStatus(t *testing.T) {
+	calls := 0
+	admin, err := NewManagementWithRevision("127.0.0.1:12345", "west-1", managementTestKey, func() string {
+		calls++
+		return "revision-1"
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/admin/v1/status", nil)
+	rec := httptest.NewRecorder()
+	admin.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || calls != 0 || strings.Contains(rec.Body.String(), "revision-1") {
+		t.Fatal("unauthenticated request accessed active configuration")
+	}
+	req.Header.Set("Authorization", "Bearer "+managementTestKey)
+	rec = httptest.NewRecorder()
+	admin.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || calls != 1 || strings.TrimSpace(rec.Body.String()) != `{"node_id":"west-1","ready":false,"applied_revision":"revision-1"}` {
+		t.Fatal("authenticated status did not publish applied metadata without asserting readiness")
+	}
+}

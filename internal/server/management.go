@@ -17,7 +17,7 @@ var (
 )
 
 // dataPlaneReady describes inference readiness, not process or management liveness.
-// The skeleton has no routable models or applied configuration yet.
+// Accepted metadata alone does not make the inference path routable.
 func dataPlaneReady() bool { return false }
 
 func handleReadyz(w http.ResponseWriter, _ *http.Request) {
@@ -40,6 +40,12 @@ type nodeStatus struct {
 // inference listener. Only a literal loopback address is accepted: this stage
 // does not implement secure cross-host transport.
 func NewManagement(addr, nodeID, key string) (*Server, error) {
+	return NewManagementWithRevision(addr, nodeID, key, nil)
+}
+
+// NewManagementWithRevision uses a concurrency-safe source for the current
+// accepted local metadata revision. An empty revision is reported as null.
+func NewManagementWithRevision(addr, nodeID, key string, appliedRevision func() string) (*Server, error) {
 	ap, err := netip.ParseAddrPort(addr)
 	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 {
 		return nil, errors.New("management address must be a numeric loopback address with a nonzero port")
@@ -66,7 +72,13 @@ func NewManagement(addr, nodeID, key string) (*Server, error) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeJSON(w, http.StatusOK, nodeStatus{NodeID: nodeID, Ready: dataPlaneReady()})
+		status := nodeStatus{NodeID: nodeID, Ready: dataPlaneReady()}
+		if appliedRevision != nil {
+			if revision := appliedRevision(); revision != "" {
+				status.AppliedRevision = &revision
+			}
+		}
+		writeJSON(w, http.StatusOK, status)
 	})
 	return &Server{httpServer: &http.Server{
 		Addr:              addr,
