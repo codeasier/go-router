@@ -6,69 +6,30 @@ import (
 	"context"
 	"io"
 	"net/http"
+
+	"github.com/codeasier/go-router/internal/chatwire"
 )
 
-const maxEvent = 64 << 10
-
-type event struct {
-	raw     []byte
-	data    []byte
-	hasData bool
-}
-
-// nextEvent returns only fully delimited SSE frames. EOF within a frame is
-// never a message or a terminal marker. Support LF, CRLF and multi-line data.
-func nextEvent(r *bufio.Reader, remaining *int) (event, bool) {
-	var e event
-	for {
-		line, err := r.ReadSlice('\n')
-		if err != nil || len(e.raw)+len(line) > maxEvent || len(line) > *remaining {
-			return event{}, false
-		}
-		*remaining -= len(line)
-		e.raw = append(e.raw, line...)
-		line = bytes.TrimSuffix(line, []byte{'\n'})
-		line = bytes.TrimSuffix(line, []byte{'\r'})
-		if len(line) == 0 {
-			return e, true
-		}
-		field, value, _ := bytes.Cut(line, []byte{':'})
-		switch string(field) {
-		case "":
-			// SSE comment.
-		case "data":
-			if e.hasData {
-				e.data = append(e.data, '\n')
-			}
-			e.hasData = true
-			e.data = append(e.data, bytes.TrimPrefix(value, []byte{' '})...)
-		default:
-			// This fixture supports only plain OpenAI data frames and comments.
-			return event{}, false
-		}
-	}
-}
-
 func forwardStream(ctx context.Context, w http.ResponseWriter, body io.Reader) (bool, *Usage) {
-	r := bufio.NewReaderSize(body, maxEvent)
+	r := bufio.NewReaderSize(body, chatwire.MaxEvent)
 	remaining := maxReply
 	started, anyChoice, finalUsageFrame := false, false, false
 	var observed *Usage
 	for ctx.Err() == nil {
-		e, ok := nextEvent(r, &remaining)
-		if !ok {
+		e, ok := chatwire.NextEvent(r, &remaining)
+		if !ok || e.Error {
 			break
 		}
-		if !e.hasData {
+		if !e.HasData {
 			continue
 		}
-		done := bytes.Equal(e.data, []byte("[DONE]"))
+		done := bytes.Equal(e.Data, []byte("[DONE]"))
 		if done {
 			if !anyChoice {
 				break
 			}
 		} else {
-			p, parsed := parsePayload(e.data, "chat.completion.chunk")
+			p, parsed := chatwire.ParsePayload(e.Data, "chat.completion.chunk")
 			if !parsed || finalUsageFrame {
 				break
 			}
@@ -79,7 +40,7 @@ func forwardStream(ctx context.Context, w http.ResponseWriter, body io.Reader) (
 					break
 				}
 				finalUsageFrame = true
-				observed = p.confirmedUsage()
+				observed = p.ConfirmedUsage()
 			}
 		}
 
@@ -91,7 +52,7 @@ func forwardStream(ctx context.Context, w http.ResponseWriter, body io.Reader) (
 			w.Header().Set("Cache-Control", "no-cache")
 			started = true
 		}
-		_, err := w.Write(e.raw)
+		_, err := w.Write(e.Raw)
 		if done {
 			// Upstream completion is known even if the client disconnects
 			// while we deliver the last verified frame.

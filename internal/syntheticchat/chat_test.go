@@ -150,7 +150,7 @@ func TestDurableIntentPrecedesWireRequest(t *testing.T) {
 	s, b, headers := send(t, g, plainInput)
 	o := observation(t, c)
 	if s != http.StatusOK || !strings.Contains(b, "hello") || o.Execution != Executed || !o.Complete ||
-		o.Usage == nil || *o.Usage != (Usage{2, 1, 3}) || o.RequestID != headers.Get("X-Request-ID") ||
+		o.Usage == nil || *o.Usage != (Usage{PromptTokens: 2, CompletionTokens: 1, TotalTokens: 3}) || o.RequestID != headers.Get("X-Request-ID") ||
 		count.Load() != 1 || tr.open.Load() != 0 {
 		t.Fatalf("unexpected JSON outcome: HTTP %d %#v; requests=%d bodies=%d", s, o, count.Load(), tr.open.Load())
 	}
@@ -255,7 +255,7 @@ func TestSSETerminationAndUsage(t *testing.T) {
 				if b != tc.wire || o.Execution != Executed {
 					t.Fatal("confirmed completion did not preserve upstream frames")
 				}
-				if tc.usage && *o.Usage != (Usage{2, 1, 3}) {
+				if tc.usage && *o.Usage != (Usage{PromptTokens: 2, CompletionTokens: 1, TotalTokens: 3}) {
 					t.Fatalf("incorrect usage: %#v", o.Usage)
 				}
 			} else if o.Execution != Unknown || strings.Contains(b, "[DONE]") || !strings.Contains(b, "event: error\ndata:") {

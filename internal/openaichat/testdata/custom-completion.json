@@ -1,0 +1,1 @@
+{"id":"offline-fixture","object":"chat.completion","model":"catalog/model","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"offline-call","type":"function","function":{"name":"probe","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11},"vendor_extension":{"trace":4}}
