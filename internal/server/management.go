@@ -34,18 +34,19 @@ type nodeStatus struct {
 	NodeID          string  `json:"node_id"`
 	Ready           bool    `json:"ready"`
 	AppliedRevision *string `json:"applied_revision"`
+	AppliedDigest   *string `json:"applied_digest"`
 }
 
 // NewManagement builds an optional read-only HTTP listener, independent of the
 // inference listener. Only a literal loopback address is accepted: this stage
 // does not implement secure cross-host transport.
 func NewManagement(addr, nodeID, key string) (*Server, error) {
-	return NewManagementWithRevision(addr, nodeID, key, nil)
+	return NewManagementWithIdentity(addr, nodeID, key, nil)
 }
 
-// NewManagementWithRevision uses a concurrency-safe source for the current
-// accepted local metadata revision. An empty revision is reported as null.
-func NewManagementWithRevision(addr, nodeID, key string, appliedRevision func() string) (*Server, error) {
+// NewManagementWithIdentity reads a revision and exact-byte SHA-256 together
+// from a trusted snapshot source. Missing identity evidence is reported as null.
+func NewManagementWithIdentity(addr, nodeID, key string, identity func() (string, string)) (*Server, error) {
 	ap, err := netip.ParseAddrPort(addr)
 	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 {
 		return nil, errors.New("management address must be a numeric loopback address with a nonzero port")
@@ -73,9 +74,12 @@ func NewManagementWithRevision(addr, nodeID, key string, appliedRevision func() 
 			return
 		}
 		status := nodeStatus{NodeID: nodeID, Ready: dataPlaneReady()}
-		if appliedRevision != nil {
-			if revision := appliedRevision(); revision != "" {
+		if identity != nil {
+			if revision, digest := identity(); revision != "" {
 				status.AppliedRevision = &revision
+				if digest != "" {
+					status.AppliedDigest = &digest
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, status)

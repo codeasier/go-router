@@ -49,7 +49,7 @@ func main() {
 
 	servers := []*server.Server{server.New(*addr)}
 	if *adminAddr != "" {
-		admin, err := server.NewManagementWithRevision(*adminAddr, *nodeID, key, config.revision)
+		admin, err := server.NewManagementWithIdentity(*adminAddr, *nodeID, key, config.identity)
 		if err != nil {
 			logger.Error("invalid management configuration", "err", err)
 			os.Exit(1)

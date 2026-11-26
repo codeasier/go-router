@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,13 @@ import (
 	"github.com/codeasier/go-router/internal/nodeconfig"
 	"github.com/codeasier/go-router/internal/server"
 )
+
+func (c *localConfiguration) revision() string {
+	revision, _ := c.identity()
+	return revision
+}
+
+func configDigest(body string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(body))) }
 
 func configJSON(revision string) string {
 	return fmt.Sprintf(`{"schema_version":1,"revision":%q,"providers":[]}`, revision)
@@ -28,8 +36,10 @@ func TestConfigurationActivation(t *testing.T) {
 	const key = "synthetic-management-key-0123456789"
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	config := newLocalConfiguration(path, key)
-	if config.revision() != "" || (*localConfiguration)(nil).revision() != "" {
-		t.Fatal("configuration was not initially empty")
+	for _, c := range []*localConfiguration{config, nil} {
+		if r, d := c.identity(); r != "" || d != "" {
+			t.Fatal("configuration was not initially empty")
+		}
 	}
 
 	cases := []struct {
@@ -89,7 +99,7 @@ func TestConcurrentRevisionReadback(t *testing.T) {
 	for range 4 {
 		readers.Go(func() {
 			for ctx.Err() == nil {
-				if r := config.revision(); r != "before" && r != "after" {
+				if r, d := config.identity(); (r != "before" && r != "after") || d != configDigest(configJSON(r)) {
 					t.Error("reader saw a partial or unaccepted snapshot")
 					return
 				}
@@ -104,8 +114,23 @@ func TestConcurrentRevisionReadback(t *testing.T) {
 	if _, err := config.load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if config.revision() != "after" {
+	if r, d := config.identity(); r != "after" || d != configDigest(configJSON("after")) {
 		t.Fatal("accepted revision was not published")
+	}
+}
+
+func TestIdentityNeverEchoesHexBearer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	body := configJSON("r1")
+	digest := configDigest(body)
+	key := digest[8:40]
+	config := newLocalConfiguration(path, key)
+	writeConfigFixture(t, path, body)
+	if _, err := config.load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if r, d := config.identity(); r != "r1" || d != "" {
+		t.Fatal("expected revision and no digest for credential collision")
 	}
 }
 

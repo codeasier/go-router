@@ -70,21 +70,22 @@ func TestCollectorTwoNodesAndDashboardHTTP(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"node_id":%q,"ready":true,"applied_revision":%q}`, id, rev)
+			fmt.Fprintf(w, `{"node_id":%q,"ready":true,"applied_revision":%q,"applied_digest":%q}`, id, rev, digestA)
 		}))
 	}
 	a, b := serve("node-a", collectorKeyA, "rev-7", &aCalls, nil), serve("node-b", collectorKeyB, "rev-6", &bCalls, &failB)
 	defer a.Close()
 	defer b.Close()
 	config := []CollectorNode{
-		{NodeID: "node-a", AdminAddr: localAddr(a), BearerKey: collectorKeyA, DesiredRevision: ptr("rev-7")},
-		{NodeID: "node-b", AdminAddr: localAddr(b), BearerKey: collectorKeyB, DesiredRevision: ptr("rev-7")},
+		{NodeID: "node-a", AdminAddr: localAddr(a), BearerKey: collectorKeyA, DesiredRevision: ptr("rev-7"), DesiredDigest: ptr(digestA)},
+		{NodeID: "node-b", AdminAddr: localAddr(b), BearerKey: collectorKeyB, DesiredRevision: ptr("rev-7"), DesiredDigest: ptr(digestA)},
 	}
 	c, err := NewCollector(config, 20*time.Millisecond, 300*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
 	*config[0].DesiredRevision = "caller-mutated"
+	*config[0].DesiredDigest = digestB
 	rows, err := c.Snapshots(context.Background())
 	if err != nil || len(rows) != 2 || *rows[0].DesiredRevision != "rev-7" || rows[0].LastStatus != nil || rows[0].Offline || aCalls.Load() != 0 || bCalls.Load() != 0 {
 		t.Fatalf("before polling: %v, %v", rows, err)
@@ -101,6 +102,8 @@ func TestCollectorTwoNodesAndDashboardHTTP(t *testing.T) {
 	}
 	*rows[0].DesiredRevision = "caller-mutated"
 	*rows[0].LastStatus.AppliedRevision = "caller-mutated"
+	*rows[0].LastStatus.AppliedDigest = digestB
+	*rows[1].DesiredDigest = digestB
 	dash := httptest.NewServer(NewDashboard(c, time.Minute))
 	defer dash.Close()
 	checkView := func(wantB string) {
@@ -138,6 +141,11 @@ func TestCollectorRejectsInvalidStatusAndRedirect(t *testing.T) {
 	}{
 		{"known-empty-revision", `{"node_id":"node-a","ready":false,"applied_revision":null}`, "application/json; charset=utf-8", false, true},
 		{"unknown-field", `{"extra":9,"node_id":"node-a","ready":false,"applied_revision":null}`, "application/json", false, true},
+		{"explicit-null-digest", `{"node_id":"node-a","ready":false,"applied_revision":null,"applied_digest":null}`, "application/json", false, true},
+		{"orphan-digest", `{"node_id":"node-a","ready":false,"applied_revision":null,"applied_digest":"` + digestA + `"}`, "application/json", false, false},
+		{"non-string-digest", `{"node_id":"node-a","ready":false,"applied_revision":"r","applied_digest":42}`, "application/json", false, false},
+		{"duplicate-digest", `{"node_id":"node-a","ready":false,"applied_revision":"r","applied_digest":null,"applied_digest":"` + digestA + `"}`, "application/json", false, false},
+		{"uppercase-digest", `{"node_id":"node-a","ready":false,"applied_revision":"r","applied_digest":"` + strings.ToUpper(digestA) + `"}`, "application/json", false, false},
 		{"wrong-node", `{"node_id":"node-b","ready":true,"applied_revision":null}`, "application/json", false, false},
 		{"missing-ready", `{"node_id":"node-a","applied_revision":null}`, "application/json", false, false},
 		{"wrong-ready-type", `{"node_id":"node-a","ready":"false","applied_revision":null}`, "application/json", false, false},
@@ -243,5 +251,32 @@ func TestCollectorInventoryValidation(t *testing.T) {
 		if _, err := NewCollector([]CollectorNode{one, two}, time.Second, time.Second); err == nil || strings.Contains(err.Error(), collectorKeyA) {
 			t.Fatal("unsafe registration accepted or echoed")
 		}
+	}
+}
+
+func TestCollectorHexCredentialCannotBeDigest(t *testing.T) {
+	key := digestA[:32]
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"node_id":"node-a","ready":false,"applied_revision":"r","applied_digest":%q}`, digestA)
+	}))
+	defer srv.Close()
+	node := CollectorNode{NodeID: "node-a", AdminAddr: localAddr(srv), BearerKey: key, DesiredRevision: ptr("r")}
+	c, err := NewCollector([]CollectorNode{node}, time.Minute, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, err := c.poll(context.Background(), c.nodes[0], node.NodeID); err == nil || strings.Contains(err.Error(), key) || status != nil {
+		t.Fatal("credential-bearing status was accepted or echoed")
+	}
+	for _, value := range []string{digestA, "", "a", strings.ToUpper(digestB)} {
+		node.DesiredDigest = ptr(value)
+		if _, err := NewCollector([]CollectorNode{node}, time.Minute, time.Second); err == nil || strings.Contains(err.Error(), key) {
+			t.Fatal("credential-bearing or malformed desired digest was accepted or echoed")
+		}
+	}
+	node.DesiredDigest, node.DesiredRevision = ptr(digestB), nil
+	if _, err := NewCollector([]CollectorNode{node}, time.Minute, time.Second); err == nil {
+		t.Fatal("orphan desired digest was accepted")
 	}
 }

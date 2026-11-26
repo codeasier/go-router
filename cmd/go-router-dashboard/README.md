@@ -31,8 +31,20 @@ Use a private directory you control. Provide the two key values from your
 trusted local secret environment. Each must match the separately configured
 `GO_ROUTER_MANAGEMENT_KEY` for its gateway. Do not put either value in this
 file, a shell command or a commit. Gateway `-node-id` and `-admin-addr` must match
-the inventory. An optional desired revision is a display/comparison value;
-setting it does not apply a revision to a gateway.
+the inventory. The optional `desired_revision` and `desired_digest` are per-node targets;
+setting them does not apply a configuration. For a verified target, hash the
+trusted immutable node configuration file **before** distribution (for example,
+`sha256sum node.json`). Set its exact revision and the 64 lowercase hex
+characters of that SHA-256 in the inventory. JSON whitespace and trailing
+newlines count. Do not copy the digest from the node being checked.
+
+Upgrade the Dashboard binary with its old inventory first, then the nodes,
+then add the intended digests to the private inventory and restart the
+Dashboard. Missing either side's digest leaves the row **Unverified**. A fresh
+complete different pair is **Drift**; a fresh equal pair is **Matched**. This
+compares configuration identity, not routability. Offline or stale nodes never
+confirm a match. Remove new inventory fields before reverting to an older
+Dashboard binary (its inventory parser rejects unknown fields).
 
 From the repository root:
 
@@ -44,7 +56,7 @@ Open `http://127.0.0.1:20129/` using the exact numeric address; hostnames are
 not accepted. The collector polls each node independently every two seconds
 after its last check, with a one-second timeout. Refresh the page to read
 the latest snapshot. Stopping one node should only mark that row offline;
-restarting it should restore its current observation. A gateway without a
-routable configuration should show **Not ready** and an unknown applied
-revision, not claim availability. Stopping this Dashboard does not stop
+restarting it should restore its current observation. A gateway with only accepted metadata
+can be **Matched** while **Not ready**; without a configuration it has an
+unknown applied revision and is **Unverified**. Stopping this Dashboard does not stop
 either gateway.
