@@ -45,8 +45,8 @@ type Snapshot struct {
 func (s *Snapshot) Revision() string { return s.revision }
 
 // Digest is the SHA-256 identity of the exact accepted bytes, including
-// whitespace. Nodes use it locally to detect reuse of a revision label; it
-// is not a revision or a field in an HTTP response or log.
+// whitespace. It is distinct from the revision label. Management may report
+// it to authorized callers; the artifact bytes themselves remain local.
 func (s *Snapshot) Digest() [sha256.Size]byte { return s.digest }
 
 // Catalog returns a read-only registry of the enabled providers and models.

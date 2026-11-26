@@ -32,11 +32,9 @@ trusted local secret environment. Each must match the separately configured
 `GO_ROUTER_MANAGEMENT_KEY` for its gateway. Do not put either value in this
 file, a shell command or a commit. Gateway `-node-id` and `-admin-addr` must match
 the inventory. The optional `desired_revision` and `desired_digest` are per-node targets;
-setting them does not apply a configuration. For a verified target, hash the
-trusted immutable node configuration file **before** distribution (for example,
-`sha256sum node.json`). Set its exact revision and the 64 lowercase hex
-characters of that SHA-256 in the inventory. JSON whitespace and trailing
-newlines count. Do not copy the digest from the node being checked.
+setting them does not apply a configuration. The preflight below derives those values from a validated local artifact so
+you do not need to hash it by hand. JSON whitespace and trailing newlines
+count. Do not derive the intended digest from the status being checked.
 
 Upgrade the Dashboard binary with its old inventory first, then the nodes,
 then add the intended digests to the private inventory and restart the
@@ -60,3 +58,45 @@ restarting it should restore its current observation. A gateway with only accept
 can be **Matched** while **Not ready**; without a configuration it has an
 unknown applied revision and is **Unverified**. Stopping this Dashboard does not stop
 either gateway.
+
+## Preview and check one intended artifact
+
+For a local pilot that intends to give both nodes the same configuration,
+keep one immutable, credential-free candidate JSON file under operator
+control. Plan the distribution **before** moving any files:
+
+```sh
+go-router-dashboard preflight -config dashboard-local.json -candidate node.json \
+  -node node-a -node node-b
+```
+
+This validates the same schema as the gateway and reads the existing private
+inventory. It prints one versioned JSON plan with `target.desired_revision`,
+`target.desired_digest`, the explicit node IDs and `converged: null`. It does
+not resolve bearer environment variables, connect to nodes or write files.
+The two `target` values can be put into the selected inventory rows to pin the
+same intent in the live Dashboard. Keep addresses and credentials out of the
+candidate; only the intended pair, safe node IDs and status are reported.
+
+After the operator separately applies those exact bytes, append `-check`.
+With the regular Dashboard bearer environment, the command makes one
+authenticated status GET per selected loopback node, in parallel. It does
+not compare to existing desired values in the inventory or trust any other
+node as the expected source. Each receipt states its observation and comparison
+and provides the applied identity when available. Missing digest evidence is
+**Unverified**. An unsuccessful status request is **Offline** (not proof the
+process stopped). A non-routable node may have an exact match but report
+**Not ready**.
+
+Exit codes when running the compiled binary:
+
+- **0**: validated preview, or every requested receipt matched under `-check`.
+- **1**: at least one requested receipt did not match (JSON still written), or
+  an interruption or output error prevented reporting.
+- **2**: invalid command, inventory or candidate (no plan; fixed diagnostics
+  on stderr).
+
+Preflight is not a configuration write, publication, ingress gate, or proof of
+inference. It does not copy the candidate or approve a future apply. Do not edit
+or reserialize that artifact between the preview and any separately authorized
+distribution; re-run the check against the original trusted file after applying.

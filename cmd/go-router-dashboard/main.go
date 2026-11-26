@@ -19,13 +19,20 @@ import (
 	"github.com/codeasier/go-router/internal/controlplane"
 )
 
-const usage = "Usage: go-router-dashboard -config <private JSON file> [-addr 127.0.0.1:20129]"
+const usage = "Usage: go-router-dashboard -config <private JSON file> [-addr 127.0.0.1:20129]\n       go-router-dashboard preflight -help"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := run(ctx, os.Args[1:], os.LookupEnv, os.Stderr)
+	code := dispatch(ctx, os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
+}
+
+func dispatch(ctx context.Context, args []string, lookup func(string) (string, bool), out, diagnostic io.Writer) int {
+	if len(args) > 0 && args[0] == "preflight" {
+		return runPreflight(ctx, args[1:], lookup, out, diagnostic)
+	}
+	return run(ctx, args, lookup, diagnostic)
 }
 
 func run(ctx context.Context, args []string, lookup func(string) (string, bool), out io.Writer) int {
