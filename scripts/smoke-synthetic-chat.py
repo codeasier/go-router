@@ -29,9 +29,21 @@ with tempfile.TemporaryDirectory(prefix="go-router-synthetic-") as tmp:
         alternate.write_text(json.dumps(value))
         alternate.replace(config)
 
-    with socket.socket() as server:
+    with socket.socket() as server, socket.socket() as management:
         server.bind(("127.0.0.1", 0))
+        management.bind(("127.0.0.1", 0))
         port = server.getsockname()[1]
+        admin_port = management.getsockname()[1]
+    key = "fixture-management-key-012345678901234567"
+    def management_status():
+        conn = http.client.HTTPConnection("127.0.0.1", admin_port, timeout=2)
+        try:
+            conn.request("GET", "/admin/v1/status", headers={"Authorization": "Bearer " + key})
+            response = conn.getresponse()
+            assert response.status == 200
+            return json.loads(response.read())
+        finally:
+            conn.close()
 
     def request(path, body=None):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
@@ -79,10 +91,16 @@ with tempfile.TemporaryDirectory(prefix="go-router-synthetic-") as tmp:
 
     write("revision-one", True)
     process = subprocess.Popen([binary, "-addr", f"127.0.0.1:{port}", "-config",
-                                str(config), "-synthetic-journal", str(journal_dir)], env={})
+                                str(config), "-synthetic-journal", str(journal_dir), "-admin-addr",
+                                f"127.0.0.1:{admin_port}", "-node-id", "pilot-node"],
+                               env={"GO_ROUTER_MANAGEMENT_KEY": key})
     try:
         await_result(lambda: list_models() == ["fixture/demo/chat"])
         assert request("/readyz")[0] == 200
+        await_result(lambda: management_status() == {
+            "node_id": "pilot-node", "ready": True, "applied_revision": "revision-one",
+            "applied_digest": hashlib.sha256(config.read_bytes()).hexdigest(),
+        })
         ids = []
         for model, stream in [("fixture/demo/chat", False), ("fx/alias", True)]:
             code, headers, body = chat(model, stream)
@@ -101,6 +119,10 @@ with tempfile.TemporaryDirectory(prefix="go-router-synthetic-") as tmp:
         process.send_signal(signal.SIGHUP)
         await_result(lambda: list_models() == [])
         assert request("/readyz")[0] == 503
+        assert management_status() == {
+            "node_id": "pilot-node", "ready": False, "applied_revision": "revision-two",
+            "applied_digest": hashlib.sha256(config.read_bytes()).hexdigest(),
+        }
         assert [chat(name)[0] for name in ("fixture/demo/chat", "fx/alias")] == [404, 404]
         assert len(intents()) == 2
         print("PASS: reload removes the disabled model and alias without sending additional requests")

@@ -34,29 +34,19 @@ type nodeStatus struct {
 	NodeID          string  `json:"node_id"`
 	Ready           bool    `json:"ready"`
 	AppliedRevision *string `json:"applied_revision"`
+	AppliedDigest   *string `json:"applied_digest"`
 }
 
 // NewManagement builds an optional read-only HTTP listener, independent of the
 // inference listener. Only a literal loopback address is accepted: this stage
 // does not implement secure cross-host transport.
 func NewManagement(addr, nodeID, key string) (*Server, error) {
-	return NewManagementWithRevision(addr, nodeID, key, nil)
+	return NewManagementWithIdentity(addr, nodeID, key, nil)
 }
 
-// NewManagementWithRevision uses a concurrency-safe source for the current
-// accepted local metadata revision. An empty revision is reported as null.
-func NewManagementWithRevision(addr, nodeID, key string, appliedRevision func() string) (*Server, error) {
-	if appliedRevision == nil {
-		return NewManagementWithStatus(addr, nodeID, key, nil)
-	}
-	return NewManagementWithStatus(addr, nodeID, key, func() (string, bool) {
-		return appliedRevision(), false
-	})
-}
-
-// NewManagementWithStatus reads revision and readiness from one immutable
-// generation, so an update cannot mix a previous revision with new routes.
-func NewManagementWithStatus(addr, nodeID, key string, current func() (string, bool)) (*Server, error) {
+// NewManagementWithIdentity reads a revision and exact-byte SHA-256 together
+// from a trusted snapshot source. Missing identity evidence is reported as null.
+func NewManagementWithIdentity(addr, nodeID, key string, identity func() (string, string, bool)) (*Server, error) {
 	ap, err := netip.ParseAddrPort(addr)
 	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 {
 		return nil, errors.New("management address must be a numeric loopback address with a nonzero port")
@@ -84,11 +74,14 @@ func NewManagementWithStatus(addr, nodeID, key string, current func() (string, b
 			return
 		}
 		status := nodeStatus{NodeID: nodeID, Ready: dataPlaneReady()}
-		if current != nil {
-			revision, ready := current()
+		if identity != nil {
+			revision, digest, ready := identity()
 			status.Ready = ready
 			if revision != "" {
 				status.AppliedRevision = &revision
+				if digest != "" {
+					status.AppliedDigest = &digest
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, status)

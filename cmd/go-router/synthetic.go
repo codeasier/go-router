@@ -57,11 +57,3 @@ func prepareSynthetic(addr, dir string, config *localConfiguration, logger *slog
 	}, nil
 }
 
-func (c *localConfiguration) status() (string, bool) {
-	if c != nil {
-		if active := c.active.Load(); active != nil {
-			return active.Revision(), active.routes != nil && active.routes.Ready
-		}
-	}
-	return "", false
-}

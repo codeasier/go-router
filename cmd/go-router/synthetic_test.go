@@ -86,7 +86,7 @@ func TestSyntheticActivationIsAllOrNothing(t *testing.T) {
 		if changed, err := load("r2", bad.name, bad.transport); changed || err == nil {
 			t.Fatal("unusable model published")
 		}
-		if revision, ready := config.status(); revision != "r1" || !ready {
+		if revision, digest, ready := config.identity(); revision != "r1" || len(digest) != 64 || !ready {
 			t.Fatal("invalid config changed revision/readiness")
 		}
 	}

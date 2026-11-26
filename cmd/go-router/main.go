@@ -77,7 +77,7 @@ func main() {
 
 	servers := []*server.Server{inference}
 	if *adminAddr != "" {
-		admin, err := server.NewManagementWithStatus(*adminAddr, *nodeID, key, config.status)
+		admin, err := server.NewManagementWithIdentity(*adminAddr, *nodeID, key, config.identity)
 		if err != nil {
 			logger.Error("invalid management configuration", "err", err)
 			os.Exit(1)

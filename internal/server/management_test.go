@@ -54,7 +54,7 @@ func TestManagementStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"node_id": "west-1", "ready": false, "applied_revision": nil}
+	want := map[string]any{"node_id": "west-1", "ready": false, "applied_revision": nil, "applied_digest": nil}
 	if !reflect.DeepEqual(body, want) {
 		t.Errorf("fields = %v, want %v", body, want)
 	}
@@ -105,11 +105,12 @@ func TestDataPlaneReadinessAndIsolation(t *testing.T) {
 	}
 }
 
-func TestAppliedRevisionOnlyInAuthenticatedStatus(t *testing.T) {
+func TestAppliedIdentityOnlyInAuthenticatedStatus(t *testing.T) {
 	calls := 0
-	admin, err := NewManagementWithRevision("127.0.0.1:12345", "west-1", managementTestKey, func() string {
+	digest := strings.Repeat("a", 64)
+	admin, err := NewManagementWithIdentity("127.0.0.1:12345", "west-1", managementTestKey, func() (string, string, bool) {
 		calls++
-		return "revision-1"
+		return "revision-1", digest, false
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +124,7 @@ func TestAppliedRevisionOnlyInAuthenticatedStatus(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+managementTestKey)
 	rec = httptest.NewRecorder()
 	admin.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || calls != 1 || strings.TrimSpace(rec.Body.String()) != `{"node_id":"west-1","ready":false,"applied_revision":"revision-1"}` {
+	if rec.Code != http.StatusOK || calls != 1 || strings.TrimSpace(rec.Body.String()) != `{"node_id":"west-1","ready":false,"applied_revision":"revision-1","applied_digest":"`+digest+`"}` {
 		t.Fatal("authenticated status did not publish applied metadata without asserting readiness")
 	}
 }

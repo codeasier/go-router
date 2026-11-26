@@ -18,6 +18,7 @@ type NodeStatus struct {
 	NodeID          string  `json:"node_id"`
 	Ready           bool    `json:"ready"`
 	AppliedRevision *string `json:"applied_revision"`
+	AppliedDigest   *string `json:"applied_digest"`
 }
 
 // NodeSnapshot identifies a registered node independently of the last response.
@@ -26,6 +27,7 @@ type NodeStatus struct {
 type NodeSnapshot struct {
 	NodeID          string
 	DesiredRevision *string
+	DesiredDigest   *string
 	LastStatus      *NodeStatus
 	LastSeen        time.Time
 	Offline         bool
@@ -45,6 +47,12 @@ var fleetPage = template.Must(template.ParseFS(dashboardFiles, "dashboard.html")
 // Keep URLs, arbitrary error strings, and control characters out of the operator
 // projection. IDs and revisions are opaque display identifiers, not free text.
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
+// Digests are SHA-256 of the exact accepted bytes, not a hash of the label
+// or of re-serialized JSON. Never compare against another node as the baseline.
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func validDigest(d *string) bool { return d != nil && sha256Hex.MatchString(*d) }
 
 type fleetRow struct {
 	Node, Observation, Desired, Applied, Comparison, Seen string
@@ -144,8 +152,8 @@ func project(node NodeSnapshot, now time.Time, maxAge time.Duration) fleetRow {
 	} else {
 		row.Observation = "Not ready"
 	}
-	if row.Desired != "" && row.Applied != "" {
-		if row.Desired == row.Applied {
+	if row.Desired != "" && row.Applied != "" && validDigest(node.DesiredDigest) && validDigest(status.AppliedDigest) {
+		if row.Desired == row.Applied && *node.DesiredDigest == *status.AppliedDigest {
 			row.Comparison = "Matched"
 		} else {
 			row.Comparison = "Drift"
