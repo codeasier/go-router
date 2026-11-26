@@ -69,9 +69,13 @@ func loadConfig(path string, lookup func(string) (string, bool)) ([]controlplane
 		if !bearerEnvName.MatchString(n.BearerEnv) {
 			return nil, errMissingKey
 		}
-		secret, ok := lookup(n.BearerEnv)
-		if !ok || secret == "" {
-			return nil, errMissingKey
+		var secret string
+		if lookup != nil { // Offline preflight validates the reference without reading the environment.
+			var ok bool
+			secret, ok = lookup(n.BearerEnv)
+			if !ok || secret == "" {
+				return nil, errMissingKey
+			}
 		}
 		nodes = append(nodes, controlplane.CollectorNode{
 			NodeID: n.NodeID, AdminAddr: n.AdminAddr, BearerKey: secret, DesiredRevision: n.DesiredRevision, DesiredDigest: n.DesiredDigest,

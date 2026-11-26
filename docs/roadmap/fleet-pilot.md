@@ -45,6 +45,13 @@ shows **Drift**. Legacy nodes or targets without a digest show **Unverified**.
 This is evidence of local acceptance, not remote publication, ingress policy
 or inference readiness.
 
+For the same artifact intended for both test nodes, use
+[`go-router-dashboard preflight`](../../cmd/go-router-dashboard/README.md#preview-and-check-one-intended-artifact)
+to validate the immutable candidate and derive that identity directly from its
+exact bytes. Preview is offline; `-check` provides independent fresh receipts
+without writing files or changing routing. Candidate distribution itself remains
+manual in this stage.
+
 ## Acceptance
 
 - Add one model in the Dashboard once. Both eligible nodes confirm applying the same revision and serve the intended model. If one node rejects the change, show intended versus applied revision, error and stale telemetry status. Exclude incompatible nodes from new traffic for the affected route without unnecessarily removing healthy unrelated routes.

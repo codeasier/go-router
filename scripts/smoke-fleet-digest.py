@@ -104,6 +104,33 @@ with tempfile.TemporaryDirectory(prefix="go-router-accept-") as directory, conte
         for node, addr, env in (("pilot-a", am, "GO_ROUTER_DASHBOARD_KEY_A"),
                                 ("pilot-b", bm, "GO_ROUTER_DASHBOARD_KEY_B"))
     ]}))
+    # The same independently pinned candidate drives an offline preview and
+    # both live checks. None of these commands may rewrite the inventory or
+    # the candidate. The preflight preview must run with no bearer variables.
+    candidate_path = path / "candidate.json"
+    candidate_path.write_bytes(expected)
+    original_inventory = inv.read_bytes()
+    preflight_args = [dashboard, "preflight", "-config", str(inv), "-candidate",
+                      str(candidate_path), "-node", "pilot-b", "-node", "pilot-a"]
+
+    def preflight(check, code, want):
+        env = ({"GO_ROUTER_DASHBOARD_KEY_A": keys[0],
+                "GO_ROUTER_DASHBOARD_KEY_B": keys[1]} if check else {})
+        result = subprocess.run(preflight_args + (["-check"] if check else []),
+                                env=env, timeout=5, capture_output=True, text=True)
+        assert result.returncode == code and not result.stderr, "preflight exit or diagnostic"
+        assert not any(value in result.stdout for value in (*keys, "GO_ROUTER_DASHBOARD_KEY_", am, bm))
+        report = json.loads(result.stdout)
+        assert report["schema_version"] == 1
+        assert report["target"] == {"desired_revision": "revision-one", "desired_digest": dg}
+        assert [row["node_id"] for row in report["nodes"]] == ["pilot-a", "pilot-b"]
+        assert [row["comparison"] for row in report["nodes"]] == want
+        assert report["converged"] is (all(state == "Matched" for state in want) if check else None)
+        assert candidate_path.read_bytes() == expected and inv.read_bytes() == original_inventory
+
+    preflight(False, 0, ["Unverified", "Unverified"])
+    preflight(True, 1, ["Matched", "Drift"])
+    print("PASS: offline plan without credentials and read-only per-node drift receipts")
     p_dash = launch([dashboard, "-addr", dash, "-config", str(inv)],
                     GO_ROUTER_DASHBOARD_KEY_A=keys[0], GO_ROUTER_DASHBOARD_KEY_B=keys[1])
     first = wait(p_dash, lambda: get(dash), lambda page: check_rows(page, "Matched", "Drift"))
@@ -113,7 +140,8 @@ with tempfile.TemporaryDirectory(prefix="go-router-accept-") as directory, conte
     files[1].write_bytes(expected)
     p_b = start_node(1)
     wait(p_dash, lambda: get(dash), lambda page: check_rows(page, "Matched", "Matched"))
-    print("PASS: both independent nodes converge when configuration bytes match")
+    preflight(True, 0, ["Matched", "Matched"])
+    print("PASS: the Dashboard and preflight confirm both nodes converge on the same bytes")
 
     replacement = path / "next.json"
     replacement.write_bytes(b"{")

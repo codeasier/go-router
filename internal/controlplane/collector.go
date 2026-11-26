@@ -93,9 +93,30 @@ func NewCollector(nodes []CollectorNode, interval, timeout time.Duration) (*Coll
 		}
 		c.bearers[n.BearerKey] = struct{}{}
 	}
-	addrs, ids := make(map[netip.AddrPort]bool, len(nodes)), make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		if !pilotNodeID.MatchString(n.NodeID) || ids[n.NodeID] || c.containsManagementKey(n.NodeID) {
+	addrs, err := validateInventory(nodes, c.containsManagementKey)
+	if err != nil {
+		return nil, err
+	}
+	for i, n := range nodes {
+		endpoint := url.URL{Scheme: "http", Host: addrs[i].String(), Path: statusPath}
+		c.nodes = append(c.nodes, registeredNode{endpoint: endpoint.String(), bearer: n.BearerKey})
+		c.snapshots = append(c.snapshots, NodeSnapshot{
+			NodeID: n.NodeID, DesiredRevision: copyString(n.DesiredRevision), DesiredDigest: copyString(n.DesiredDigest),
+		})
+	}
+	return c, nil
+}
+
+// validateInventory checks registration metadata with no I/O. Only the live
+// collector supplies a bearer collision check; offline preview resolves no keys.
+func validateInventory(nodes []CollectorNode, containsKey func(string) bool) ([]netip.AddrPort, error) {
+	if len(nodes) == 0 || len(nodes) > maxPilotNodes {
+		return nil, errors.New("invalid pilot inventory size")
+	}
+	addrs := make([]netip.AddrPort, len(nodes))
+	used, ids := make(map[netip.AddrPort]bool, len(nodes)), make(map[string]bool, len(nodes))
+	for i, n := range nodes {
+		if !pilotNodeID.MatchString(n.NodeID) || ids[n.NodeID] || containsKey(n.NodeID) {
 			return nil, errors.New("invalid or duplicate pilot node ID")
 		}
 		ids[n.NodeID] = true
@@ -104,23 +125,18 @@ func NewCollector(nodes []CollectorNode, interval, timeout time.Duration) (*Coll
 			return nil, errors.New("pilot management address must be a numeric loopback address with a nonzero port")
 		}
 		addr = netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
-		if addrs[addr] {
+		if used[addr] {
 			return nil, errors.New("duplicate pilot management address")
 		}
-		addrs[addr] = true
-		if n.DesiredRevision != nil && !c.safeRevision(n.DesiredRevision) {
+		used[addr], addrs[i] = true, addr
+		if n.DesiredRevision != nil && (!identifier.MatchString(*n.DesiredRevision) || containsKey(*n.DesiredRevision)) {
 			return nil, errors.New("invalid pilot desired revision")
 		}
-		if n.DesiredDigest != nil && (n.DesiredRevision == nil || !validDigest(n.DesiredDigest) || c.containsManagementKey(*n.DesiredDigest)) {
+		if n.DesiredDigest != nil && (n.DesiredRevision == nil || !validDigest(n.DesiredDigest) || containsKey(*n.DesiredDigest)) {
 			return nil, errors.New("invalid pilot desired configuration identity")
 		}
-		endpoint := url.URL{Scheme: "http", Host: addr.String(), Path: statusPath}
-		c.nodes = append(c.nodes, registeredNode{endpoint: endpoint.String(), bearer: n.BearerKey})
-		c.snapshots = append(c.snapshots, NodeSnapshot{
-			NodeID: n.NodeID, DesiredRevision: copyString(n.DesiredRevision), DesiredDigest: copyString(n.DesiredDigest),
-		})
 	}
-	return c, nil
+	return addrs, nil
 }
 
 // Run polls immediately and then after each node's independent interval, until
