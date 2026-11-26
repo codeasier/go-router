@@ -1,0 +1,9 @@
+: synthetic fixture
+
+data: {"id":"offline-fixture","object":"chat.completion.chunk","model":"catalog/model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"offline-call","type":"function","function":{"name":"probe","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+
+data: {"id":"offline-fixture","object":"chat.completion.chunk","model":"catalog/model","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}
+
+data: [DONE]
+
+: fixture comment after terminal
