@@ -56,4 +56,3 @@ func prepareSynthetic(addr, dir string, config *localConfiguration, logger *slog
 		journal.Close()
 	}, nil
 }
-

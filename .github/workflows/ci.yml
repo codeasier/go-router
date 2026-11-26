@@ -20,7 +20,12 @@ jobs:
           cache: false
 
       - name: gofmt
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            printf "%s\n" "$unformatted"
+            exit 1
+          fi
 
       - name: vet
         run: go vet ./...
