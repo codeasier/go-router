@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/codeasier/go-router/internal/attemptlog"
 	"github.com/codeasier/go-router/internal/server"
 	"github.com/codeasier/go-router/internal/version"
 )
@@ -21,23 +22,50 @@ func main() {
 	adminAddr := flag.String("admin-addr", "", "optional read-only management listener (numeric loopback address:port; requires -node-id and GO_ROUTER_MANAGEMENT_KEY)")
 	nodeID := flag.String("node-id", "", "stable, non-secret node ID for the management listener")
 	configPath := flag.String("config", "", "optional local node metadata JSON; reload with SIGHUP on Unix")
+	syntheticDir := flag.String("synthetic-journal", "", "opt in to local synthetic Chat using an initialized private journal directory; requires -config and numeric loopback -addr")
+	initJournal := flag.String("init-synthetic-journal", "", "exclusively initialize a synthetic journal in an existing absolute private directory and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if *initJournal != "" {
+		if flag.NFlag() != 1 || flag.NArg() != 0 {
+			logger.Error("journal initialization is a standalone operation")
+			os.Exit(1)
+		}
+		j, err := attemptlog.Create(*initJournal)
+		if err != nil || j.Close() != nil {
+			logger.Error("could not initialize synthetic journal")
+			os.Exit(1)
+		}
+		return
+	}
 	if *showVersion {
 		fmt.Printf("go-router %s (commit %s, built %s)\n", version.Version, version.Commit, version.Date)
 		return
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	var key string
 	if *adminAddr != "" {
 		key = os.Getenv("GO_ROUTER_MANAGEMENT_KEY")
 	}
 	var config *localConfiguration
-	var reloads <-chan os.Signal
 	if *configPath != "" {
 		config = newLocalConfiguration(*configPath, key)
+	}
+	inference := server.New(*addr)
+	if *syntheticDir != "" {
+		var cleanup func()
+		var err error
+		inference, cleanup, err = prepareSynthetic(*addr, *syntheticDir, config, logger)
+		if err != nil {
+			logger.Error("invalid synthetic configuration", "err", err)
+			os.Exit(1)
+		}
+		defer cleanup()
+	}
+	var reloads <-chan os.Signal
+	if config != nil {
 		var stopReload func()
 		reloads, stopReload = reloadNotifications()
 		defer stopReload()
@@ -47,7 +75,7 @@ func main() {
 		}
 	}
 
-	servers := []*server.Server{server.New(*addr)}
+	servers := []*server.Server{inference}
 	if *adminAddr != "" {
 		admin, err := server.NewManagementWithIdentity(*adminAddr, *nodeID, key, config.identity)
 		if err != nil {

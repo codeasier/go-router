@@ -15,7 +15,7 @@ The Dashboard and controller run separately from the gateway binary, but all thr
 This development step tests revision readback on one host. It does not
 publish configuration from the Dashboard, change existing routes, or connect
 to any model provider. The node reports the active local configuration
-revision in its authenticated `/admin/v1/status`; until inference is wired, it
+revision in its authenticated `/admin/v1/status`; in the default metadata-only mode it
 still reports `ready: false`, and `/v1/models` remains empty. A node started
 without a configuration reports both `applied_revision: null` and
 `applied_digest: null`. A configured node reports the revision and lowercase

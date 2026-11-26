@@ -15,7 +15,7 @@ import (
 )
 
 func (c *localConfiguration) revision() string {
-	revision, _ := c.identity()
+	revision, _, _ := c.identity()
 	return revision
 }
 
@@ -37,7 +37,7 @@ func TestConfigurationActivation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	config := newLocalConfiguration(path, key)
 	for _, c := range []*localConfiguration{config, nil} {
-		if r, d := c.identity(); r != "" || d != "" {
+		if r, d, _ := c.identity(); r != "" || d != "" {
 			t.Fatal("configuration was not initially empty")
 		}
 	}
@@ -99,7 +99,7 @@ func TestConcurrentRevisionReadback(t *testing.T) {
 	for range 4 {
 		readers.Go(func() {
 			for ctx.Err() == nil {
-				if r, d := config.identity(); (r != "before" && r != "after") || d != configDigest(configJSON(r)) {
+				if r, d, _ := config.identity(); (r != "before" && r != "after") || d != configDigest(configJSON(r)) {
 					t.Error("reader saw a partial or unaccepted snapshot")
 					return
 				}
@@ -114,7 +114,7 @@ func TestConcurrentRevisionReadback(t *testing.T) {
 	if _, err := config.load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if r, d := config.identity(); r != "after" || d != configDigest(configJSON("after")) {
+	if r, d, _ := config.identity(); r != "after" || d != configDigest(configJSON("after")) {
 		t.Fatal("accepted revision was not published")
 	}
 }
@@ -129,7 +129,7 @@ func TestIdentityNeverEchoesHexBearer(t *testing.T) {
 	if _, err := config.load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if r, d := config.identity(); r != "r1" || d != "" {
+	if r, d, _ := config.identity(); r != "r1" || d != "" {
 		t.Fatal("expected revision and no digest for credential collision")
 	}
 }

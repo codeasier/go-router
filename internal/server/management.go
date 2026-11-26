@@ -46,7 +46,7 @@ func NewManagement(addr, nodeID, key string) (*Server, error) {
 
 // NewManagementWithIdentity reads a revision and exact-byte SHA-256 together
 // from a trusted snapshot source. Missing identity evidence is reported as null.
-func NewManagementWithIdentity(addr, nodeID, key string, identity func() (string, string)) (*Server, error) {
+func NewManagementWithIdentity(addr, nodeID, key string, identity func() (string, string, bool)) (*Server, error) {
 	ap, err := netip.ParseAddrPort(addr)
 	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 {
 		return nil, errors.New("management address must be a numeric loopback address with a nonzero port")
@@ -75,7 +75,9 @@ func NewManagementWithIdentity(addr, nodeID, key string, identity func() (string
 		}
 		status := nodeStatus{NodeID: nodeID, Ready: dataPlaneReady()}
 		if identity != nil {
-			if revision, digest := identity(); revision != "" {
+			revision, digest, ready := identity()
+			status.Ready = ready
+			if revision != "" {
 				status.AppliedRevision = &revision
 				if digest != "" {
 					status.AppliedDigest = &digest

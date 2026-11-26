@@ -108,9 +108,9 @@ func TestDataPlaneReadinessAndIsolation(t *testing.T) {
 func TestAppliedIdentityOnlyInAuthenticatedStatus(t *testing.T) {
 	calls := 0
 	digest := strings.Repeat("a", 64)
-	admin, err := NewManagementWithIdentity("127.0.0.1:12345", "west-1", managementTestKey, func() (string, string) {
+	admin, err := NewManagementWithIdentity("127.0.0.1:12345", "west-1", managementTestKey, func() (string, string, bool) {
 		calls++
-		return "revision-1", digest
+		return "revision-1", digest, false
 	})
 	if err != nil {
 		t.Fatal(err)

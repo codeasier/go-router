@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/codeasier/go-router/internal/nodeconfig"
+	"github.com/codeasier/go-router/internal/syntheticchat"
 )
 
 const maxProcessRevisions = 1024
@@ -19,12 +20,18 @@ var errInvalidLocalConfig = errors.New("invalid node configuration")
 
 // localConfiguration exposes one immutable accepted snapshot at a time.
 // Only startup and, later, the single local reload watcher call load.
+type activeConfiguration struct {
+	*nodeconfig.Snapshot
+	routes *syntheticchat.Routes
+}
+
 type localConfiguration struct {
 	path          string
 	managementKey string
 	commit        sync.Mutex
 	accepted      map[string]struct{}
-	active        atomic.Pointer[nodeconfig.Snapshot]
+	active        atomic.Pointer[activeConfiguration]
+	buildRoutes   func(*nodeconfig.Snapshot) (*syntheticchat.Routes, error)
 }
 
 func newLocalConfiguration(path, managementKey string) *localConfiguration {
@@ -36,21 +43,22 @@ func newLocalConfiguration(path, managementKey string) *localConfiguration {
 
 // identity pairs the revision and byte digest from one immutable snapshot. Never
 // re-read active between the two values: a concurrent reload may replace it.
-func (c *localConfiguration) identity() (revision, digest string) {
+func (c *localConfiguration) identity() (revision, digest string, ready bool) {
 	if c == nil {
-		return "", ""
+		return "", "", false
 	}
 	snap := c.active.Load()
 	if snap == nil {
-		return "", ""
+		return "", "", false
 	}
+	activeReady := snap.routes != nil && snap.routes.Ready
 	sum := snap.Digest()
 	digest = hex.EncodeToString(sum[:])
 	// Even canonical hex can equal or contain a deliberately chosen bearer.
 	if c.managementKey != "" && strings.Contains(digest, c.managementKey) {
-		return snap.Revision(), ""
+		return snap.Revision(), "", activeReady
 	}
-	return snap.Revision(), digest
+	return snap.Revision(), digest, activeReady
 }
 
 func (c *localConfiguration) load(ctx context.Context) (bool, error) {
@@ -83,8 +91,16 @@ func (c *localConfiguration) activate(ctx context.Context, candidate *nodeconfig
 	if _, exists := c.accepted[revision]; exists || len(c.accepted) >= maxProcessRevisions {
 		return false, errInvalidLocalConfig
 	}
+	next := &activeConfiguration{Snapshot: candidate}
+	if c.buildRoutes != nil {
+		routes, err := c.buildRoutes(candidate)
+		if err != nil || routes == nil {
+			return false, errInvalidLocalConfig
+		}
+		next.routes = routes
+	}
 	c.accepted[revision] = struct{}{}
-	c.active.Store(candidate)
+	c.active.Store(next)
 	return true, nil
 }
 

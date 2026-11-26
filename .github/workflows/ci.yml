@@ -20,7 +20,12 @@ jobs:
           cache: false
 
       - name: gofmt
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            printf "%s\n" "$unformatted"
+            exit 1
+          fi
 
       - name: vet
         run: go vet ./...
@@ -36,3 +41,8 @@ jobs:
           go build -o "$RUNNER_TEMP/go-router" ./cmd/go-router
           go build -o "$RUNNER_TEMP/go-router-dashboard" ./cmd/go-router-dashboard
           python3 scripts/smoke-fleet-digest.py "$RUNNER_TEMP/go-router" "$RUNNER_TEMP/go-router-dashboard"
+
+      - name: Loopback synthetic Chat process smoke
+        run: |
+          go build -o "$RUNNER_TEMP/go-router" ./cmd/go-router
+          python3 scripts/smoke-synthetic-chat.py "$RUNNER_TEMP/go-router"
