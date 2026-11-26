@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"os"
@@ -33,13 +34,23 @@ func newLocalConfiguration(path, managementKey string) *localConfiguration {
 	}
 }
 
-func (c *localConfiguration) revision() string {
-	if c != nil {
-		if snap := c.active.Load(); snap != nil {
-			return snap.Revision()
-		}
+// identity pairs the revision and byte digest from one immutable snapshot. Never
+// re-read active between the two values: a concurrent reload may replace it.
+func (c *localConfiguration) identity() (revision, digest string) {
+	if c == nil {
+		return "", ""
 	}
-	return ""
+	snap := c.active.Load()
+	if snap == nil {
+		return "", ""
+	}
+	sum := snap.Digest()
+	digest = hex.EncodeToString(sum[:])
+	// Even canonical hex can equal or contain a deliberately chosen bearer.
+	if c.managementKey != "" && strings.Contains(digest, c.managementKey) {
+		return snap.Revision(), ""
+	}
+	return snap.Revision(), digest
 }
 
 func (c *localConfiguration) load(ctx context.Context) (bool, error) {

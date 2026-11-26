@@ -37,6 +37,7 @@ type CollectorNode struct {
 	AdminAddr       string // Numeric loopback host:port, not a URL.
 	BearerKey       string
 	DesiredRevision *string
+	DesiredDigest   *string
 }
 
 type registeredNode struct {
@@ -110,10 +111,13 @@ func NewCollector(nodes []CollectorNode, interval, timeout time.Duration) (*Coll
 		if n.DesiredRevision != nil && !c.safeRevision(n.DesiredRevision) {
 			return nil, errors.New("invalid pilot desired revision")
 		}
+		if n.DesiredDigest != nil && (n.DesiredRevision == nil || !validDigest(n.DesiredDigest) || c.containsManagementKey(*n.DesiredDigest)) {
+			return nil, errors.New("invalid pilot desired configuration identity")
+		}
 		endpoint := url.URL{Scheme: "http", Host: addr.String(), Path: statusPath}
 		c.nodes = append(c.nodes, registeredNode{endpoint: endpoint.String(), bearer: n.BearerKey})
 		c.snapshots = append(c.snapshots, NodeSnapshot{
-			NodeID: n.NodeID, DesiredRevision: copyRevision(n.DesiredRevision),
+			NodeID: n.NodeID, DesiredRevision: copyString(n.DesiredRevision), DesiredDigest: copyString(n.DesiredDigest),
 		})
 	}
 	return c, nil
@@ -196,7 +200,15 @@ func (c *Collector) poll(ctx context.Context, node registeredNode, wantID string
 		json.Unmarshal(fields["applied_revision"], &rev) != nil || !c.safeRevision(rev) {
 		return nil, errBadStatus
 	}
-	return &NodeStatus{NodeID: id, Ready: *ready, AppliedRevision: rev}, nil
+	// Older nodes have no digest field; keep their liveness but do not
+	// confirm convergence. A malformed or orphaned digest invalidates the poll.
+	var digest *string
+	if raw, ok := fields["applied_digest"]; ok {
+		if json.Unmarshal(raw, &digest) != nil || (digest != nil && (rev == nil || !validDigest(digest) || c.containsManagementKey(*digest))) {
+			return nil, errBadStatus
+		}
+	}
+	return &NodeStatus{NodeID: id, Ready: *ready, AppliedRevision: rev, AppliedDigest: digest}, nil
 }
 
 func statusFields(body []byte) (map[string]json.RawMessage, error) {
@@ -244,7 +256,7 @@ func (c *Collector) containsManagementKey(value string) bool {
 	return false
 }
 
-func copyRevision(r *string) *string {
+func copyString(r *string) *string {
 	if r == nil {
 		return nil
 	}
@@ -263,10 +275,12 @@ func (c *Collector) Snapshots(ctx context.Context) ([]NodeSnapshot, error) {
 	rows := make([]NodeSnapshot, len(c.snapshots))
 	for i, row := range c.snapshots {
 		rows[i] = row
-		rows[i].DesiredRevision = copyRevision(row.DesiredRevision)
+		rows[i].DesiredRevision = copyString(row.DesiredRevision)
+		rows[i].DesiredDigest = copyString(row.DesiredDigest)
 		if row.LastStatus != nil {
 			status := *row.LastStatus
-			status.AppliedRevision = copyRevision(status.AppliedRevision)
+			status.AppliedRevision = copyString(status.AppliedRevision)
+			status.AppliedDigest = copyString(status.AppliedDigest)
 			rows[i].LastStatus = &status
 		}
 	}

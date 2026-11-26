@@ -14,7 +14,7 @@ import (
 
 const inventoryFixture = `{"nodes":[
 	{"node_id":"node-a","admin_addr":"127.0.0.1:20181","bearer_env":"GO_ROUTER_DASHBOARD_KEY_A","desired_revision":null},
-	{"node_id":"node-b","admin_addr":"127.0.0.1:20182","bearer_env":"GO_ROUTER_DASHBOARD_KEY_B","desired_revision":"rev-1"}
+	{"node_id":"node-b","admin_addr":"127.0.0.1:20182","bearer_env":"GO_ROUTER_DASHBOARD_KEY_B","desired_revision":"rev-1","desired_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 ]}`
 
 func privateFixture(t *testing.T, content string, mode os.FileMode) string {
@@ -45,6 +45,7 @@ func TestInventoryReferencesEnvironmentWithoutReadingOtherKeys(t *testing.T) {
 		t.Fatal("unexpected environmental scope")
 	}
 	if nodes[0].NodeID != "node-a" || nodes[0].DesiredRevision != nil || nodes[1].DesiredRevision == nil || *nodes[1].DesiredRevision != "rev-1" ||
+		nodes[0].DesiredDigest != nil || nodes[1].DesiredDigest == nil || *nodes[1].DesiredDigest != strings.Repeat("a", 64) ||
 		nodes[0].BearerKey != "synthetic-only-GO_ROUTER_DASHBOARD_KEY_A" || nodes[1].BearerKey != "synthetic-only-GO_ROUTER_DASHBOARD_KEY_B" {
 		t.Fatal("private inventory was not mapped correctly")
 	}

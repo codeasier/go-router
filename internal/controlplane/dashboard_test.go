@@ -17,12 +17,15 @@ func (f sourceFunc) Snapshots(ctx context.Context) ([]NodeSnapshot, error) {
 	return f(ctx)
 }
 
+const digestA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const digestB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
 func ptr(s string) *string { return &s }
 
 func sample(id, applied string, seen time.Time) NodeSnapshot {
 	return NodeSnapshot{
-		NodeID: id, DesiredRevision: ptr("rev-7"), LastSeen: seen,
-		LastStatus: &NodeStatus{NodeID: id, Ready: true, AppliedRevision: ptr(applied)},
+		NodeID: id, DesiredRevision: ptr("rev-7"), DesiredDigest: ptr(digestA), LastSeen: seen,
+		LastStatus: &NodeStatus{NodeID: id, Ready: true, AppliedRevision: ptr(applied), AppliedDigest: ptr(digestA)},
 	}
 }
 
@@ -86,6 +89,11 @@ func TestObservationStates(t *testing.T) {
 		{"last-check-failed", func(n *NodeSnapshot) { n.Offline = true }, "Offline", "rev-7", "Unverified"},
 		{"offline-no-history", func(n *NodeSnapshot) { n.Offline = true; n.LastStatus = nil }, "Offline", "Unknown", "Unverified"},
 		{"unknown", func(n *NodeSnapshot) { n.LastStatus = nil }, "Not observed", "Unknown", "Unverified"},
+		{"same-label-different-content", func(n *NodeSnapshot) { n.LastStatus.AppliedDigest = ptr(digestB) }, "Ready", "rev-7", "Drift"},
+		{"legacy-inventory", func(n *NodeSnapshot) { n.DesiredDigest = nil }, "Ready", "rev-7", "Unverified"},
+		{"legacy-node", func(n *NodeSnapshot) { n.LastStatus.AppliedDigest = nil }, "Ready", "rev-7", "Unverified"},
+		{"invalid-observed-digest", func(n *NodeSnapshot) { n.LastStatus.AppliedDigest = ptr("<bad>") }, "Ready", "rev-7", "Unverified"},
+		{"invalid-desired-digest", func(n *NodeSnapshot) { n.DesiredDigest = ptr(strings.ToUpper(digestA)) }, "Ready", "rev-7", "Unverified"},
 		{"no-revision", func(n *NodeSnapshot) { n.LastStatus.AppliedRevision = nil }, "Ready", "Unknown", "Unverified"},
 		{"not-ready", func(n *NodeSnapshot) { n.LastStatus.Ready = false }, "Not ready", "rev-7", "Matched"},
 		{"wrong-node", func(n *NodeSnapshot) { n.LastStatus.NodeID = "different" }, "Invalid observation", "Unknown", "Unverified"},

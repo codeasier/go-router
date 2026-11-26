@@ -30,6 +30,7 @@ type nodeConfig struct {
 	AdminAddr       string  `json:"admin_addr"`
 	BearerEnv       string  `json:"bearer_env"`
 	DesiredRevision *string `json:"desired_revision"`
+	DesiredDigest   *string `json:"desired_digest"`
 }
 
 func loadConfig(path string, lookup func(string) (string, bool)) ([]controlplane.CollectorNode, error) {
@@ -73,7 +74,7 @@ func loadConfig(path string, lookup func(string) (string, bool)) ([]controlplane
 			return nil, errMissingKey
 		}
 		nodes = append(nodes, controlplane.CollectorNode{
-			NodeID: n.NodeID, AdminAddr: n.AdminAddr, BearerKey: secret, DesiredRevision: n.DesiredRevision,
+			NodeID: n.NodeID, AdminAddr: n.AdminAddr, BearerKey: secret, DesiredRevision: n.DesiredRevision, DesiredDigest: n.DesiredDigest,
 		})
 	}
 	return nodes, nil

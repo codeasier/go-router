@@ -17,7 +17,10 @@ publish configuration from the Dashboard, change existing routes, or connect
 to any model provider. The node reports the active local configuration
 revision in its authenticated `/admin/v1/status`; until inference is wired, it
 still reports `ready: false`, and `/v1/models` remains empty. A node started
-without a configuration reports `applied_revision: null`.
+without a configuration reports both `applied_revision: null` and
+`applied_digest: null`. A configured node reports the revision and lowercase
+SHA-256 of the exact accepted file bytes from one snapshot. The digest is
+withheld if it would echo the management credential.
 
 Pass `-config /path/to/node.json` to opt in. For example:
 
@@ -35,9 +38,12 @@ including a rollback to an older payload. Re-reading identical bytes for the act
 The process rejects reused labels and limits history to 1,024 accepted
 revisions; history does not survive restart. An invalid update keeps the
 active revision. Check the authenticated status or the local Dashboard
-afterward. Dashboard matching here compares revision labels, not payload
-bytes across nodes. Seeing an applied revision does not mean the node can
-serve inference.
+afterward. The local Dashboard compares each node's fresh revision **and**
+digest against its own inventory target, not another node or the label alone.
+Only a complete matching pair shows **Matched**; a complete but different pair
+shows **Drift**. Legacy nodes or targets without a digest show **Unverified**.
+This is evidence of local acceptance, not remote publication, ingress policy
+or inference readiness.
 
 ## Acceptance
 
