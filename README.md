@@ -1,6 +1,6 @@
 # go-router
 
-**Status: M0 complete; M1 next.** The binary exposes version metadata at `/healthz` and through the `-version` CLI flag, and serves a placeholder model list. The proxy and unified Dashboard are not implemented yet.
+**Status: early M1 and local fleet pilot.** By default the gateway exposes health/version, an empty model list and no Chat route. An [opt-in synthetic Chat rehearsal](docs/synthetic-chat.md) exercises the binary and durable journal without a model provider. A separate [read-only Dashboard](cmd/go-router-dashboard/README.md) can observe local nodes. Neither is production provider parity or a replacement for the two existing gateways.
 
 go-router is a lightweight, multi-instance AI gateway written in Go. Lightweight gateway nodes proxy model requests; one separately running Dashboard and control plane manage multiple nodes. Both are developed in this repository. The gateway independently implements the in-scope 9router data-plane behavior.
 

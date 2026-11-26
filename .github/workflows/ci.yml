@@ -30,3 +30,8 @@ jobs:
 
       - name: build
         run: go build ./...
+
+      - name: Loopback synthetic Chat process smoke
+        run: |
+          go build -o "$RUNNER_TEMP/go-router" ./cmd/go-router
+          python3 scripts/smoke-synthetic-chat.py "$RUNNER_TEMP/go-router"

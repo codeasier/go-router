@@ -46,6 +46,17 @@ func NewManagement(addr, nodeID, key string) (*Server, error) {
 // NewManagementWithRevision uses a concurrency-safe source for the current
 // accepted local metadata revision. An empty revision is reported as null.
 func NewManagementWithRevision(addr, nodeID, key string, appliedRevision func() string) (*Server, error) {
+	if appliedRevision == nil {
+		return NewManagementWithStatus(addr, nodeID, key, nil)
+	}
+	return NewManagementWithStatus(addr, nodeID, key, func() (string, bool) {
+		return appliedRevision(), false
+	})
+}
+
+// NewManagementWithStatus reads revision and readiness from one immutable
+// generation, so an update cannot mix a previous revision with new routes.
+func NewManagementWithStatus(addr, nodeID, key string, current func() (string, bool)) (*Server, error) {
 	ap, err := netip.ParseAddrPort(addr)
 	if err != nil || !ap.Addr().IsLoopback() || ap.Addr().Zone() != "" || ap.Port() == 0 {
 		return nil, errors.New("management address must be a numeric loopback address with a nonzero port")
@@ -73,8 +84,10 @@ func NewManagementWithRevision(addr, nodeID, key string, appliedRevision func() 
 			return
 		}
 		status := nodeStatus{NodeID: nodeID, Ready: dataPlaneReady()}
-		if appliedRevision != nil {
-			if revision := appliedRevision(); revision != "" {
+		if current != nil {
+			revision, ready := current()
+			status.Ready = ready
+			if revision != "" {
 				status.AppliedRevision = &revision
 			}
 		}

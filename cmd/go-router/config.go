@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/codeasier/go-router/internal/nodeconfig"
+	"github.com/codeasier/go-router/internal/syntheticchat"
 )
 
 const maxProcessRevisions = 1024
@@ -18,12 +19,18 @@ var errInvalidLocalConfig = errors.New("invalid node configuration")
 
 // localConfiguration exposes one immutable accepted snapshot at a time.
 // Only startup and, later, the single local reload watcher call load.
+type activeConfiguration struct {
+	*nodeconfig.Snapshot
+	routes *syntheticchat.Routes
+}
+
 type localConfiguration struct {
 	path          string
 	managementKey string
 	commit        sync.Mutex
 	accepted      map[string]struct{}
-	active        atomic.Pointer[nodeconfig.Snapshot]
+	active        atomic.Pointer[activeConfiguration]
+	buildRoutes   func(*nodeconfig.Snapshot) (*syntheticchat.Routes, error)
 }
 
 func newLocalConfiguration(path, managementKey string) *localConfiguration {
@@ -72,8 +79,16 @@ func (c *localConfiguration) activate(ctx context.Context, candidate *nodeconfig
 	if _, exists := c.accepted[revision]; exists || len(c.accepted) >= maxProcessRevisions {
 		return false, errInvalidLocalConfig
 	}
+	next := &activeConfiguration{Snapshot: candidate}
+	if c.buildRoutes != nil {
+		routes, err := c.buildRoutes(candidate)
+		if err != nil || routes == nil {
+			return false, errInvalidLocalConfig
+		}
+		next.routes = routes
+	}
 	c.accepted[revision] = struct{}{}
-	c.active.Store(candidate)
+	c.active.Store(next)
 	return true, nil
 }
 

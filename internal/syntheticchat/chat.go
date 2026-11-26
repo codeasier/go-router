@@ -1,4 +1,4 @@
-// Package syntheticchat implements a deliberately unmounted, loopback-only
+// Package syntheticchat implements an explicitly opt-in, loopback-only
 // gateway fixture. It is not a production HTTP adapter or a provider registry.
 package syntheticchat
 
@@ -77,7 +77,7 @@ type handler struct {
 	target  string
 }
 
-// New returns only the fixture handler. Nothing mounts it in the daemon.
+// New returns a fixture handler. The daemon mounts it only in its local synthetic mode.
 func New(f Fixture) (http.Handler, error) {
 	u, err := url.Parse(f.Origin)
 	if err != nil || !loopbackOrigin(u) || f.Transport == nil || f.Registry == nil || f.Journal == nil {
