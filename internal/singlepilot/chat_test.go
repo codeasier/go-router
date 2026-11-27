@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/codeasier/go-router/internal/attemptlog"
+	"github.com/codeasier/go-router/internal/openaichat"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -65,13 +66,17 @@ func TestChatDispatch(t *testing.T) {
 			if tc.timeout {
 				deadline = 30 * time.Millisecond
 			}
-			h, err := routes("custom", []string{"a"}, "https://provider.invalid/v1/", "fixture", journalFunc(func(in attemptlog.Intent) error {
+			c, err := Generic("custom", []string{"a"}, "https://provider.invalid/v1/", "fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h, err := routes(journalFunc(func(in attemptlog.Intent) error {
 				intent = &in
 				if tc.refuse {
 					return errors.New("unavailable")
 				}
 				return nil
-			}), transport, deadline)
+			}), transport, deadline, c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,9 +97,13 @@ func TestChatDispatch(t *testing.T) {
 }
 
 func TestChatCanceledBeforeDispatch(t *testing.T) {
-	h, err := routes("custom", []string{"a"}, "https://provider.invalid", "fixture",
+	c, err := Generic("custom", []string{"a"}, "https://provider.invalid", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := routes(
 		journalFunc(func(attemptlog.Intent) error { t.Fatal("recorded canceled request"); return nil }),
-		roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("dispatched canceled request"); return nil, nil }), time.Second)
+		roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("dispatched canceled request"); return nil, nil }), time.Second, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,4 +112,58 @@ func TestChatCanceledBeforeDispatch(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"custom/a"}`)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
+	generic, err := Generic("custom", []string{"same-model"}, "https://provider.invalid/v1", "custom-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var intent attemptlog.Intent
+	calls := 0
+	h, err := routes(journalFunc(func(in attemptlog.Intent) error { intent = in; return nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if intent.BodyDigest != sha256.Sum256(data) {
+			t.Fatal("digest did not match")
+		}
+		if calls == 1 {
+			if r.URL.String() != openaichat.VolceChatBaseURL+"/chat/completions" || r.Header.Get("Authorization") != "Bearer volce-secret" ||
+				r.Header.Get("Accept") != "text/event-stream" || strings.Contains(string(data), `"stream"`) ||
+				!strings.Contains(string(data), `"temperature":1`) || intent.Model != "volceapi/kimi-k3" {
+				t.Fatal("wrong Volce connection or wire")
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(`data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"y"}}]}` + "\n\ndata: [DONE]\n\n"))}, nil
+		}
+		if r.URL.String() != "https://provider.invalid/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer custom-secret" ||
+			!strings.Contains(string(data), `"temperature":0.5`) || intent.Model != "custom/same-model" {
+			t.Fatal("wrong generic connection or wire")
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"y"}}]}`))}, nil
+	}), time.Second, generic, Volce([]string{"kimi-k3"}, "volce-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := httptest.NewRecorder()
+	h.ServeHTTP(models, httptest.NewRequest("GET", "/v1/models", nil))
+	if !strings.Contains(models.Body.String(), "volceapi/kimi-k3") || !strings.Contains(models.Body.String(), "custom/same-model") {
+		t.Fatal("incomplete model listing")
+	}
+	for _, tc := range []struct{ model, media string }{{"volceapi/kimi-k3", "text/event-stream"}, {"custom/same-model", "application/json"}} {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"`+tc.model+`","temperature":0.5}`))
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != 200 || res.Header().Get("Content-Type") != tc.media {
+			t.Fatalf("%s: %d %q", tc.model, res.Code, res.Body.String())
+		}
+	}
+	if calls != 2 {
+		t.Fatal("dispatch count", calls)
+	}
 }

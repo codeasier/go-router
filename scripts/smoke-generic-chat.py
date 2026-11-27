@@ -86,9 +86,10 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
 
     args = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-provider", "custom",
             "-generic-chat-base-url", f"https://127.0.0.1:{peer.server_port}/v1",
-            "-generic-chat-models", "success,interrupt,redirect,cancel", "-generic-chat-journal", str(journal)]
+            "-generic-chat-models", "success,interrupt,redirect,cancel", "-generic-chat-journal", str(journal),
+            "-volce-chat-models", "kimi-k3"]
     env = {"GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
-           "HTTPS_PROXY": "http://127.0.0.1:1"}
+           "HTTPS_PROXY": "http://127.0.0.1:1", "GO_ROUTER_VOLCE_CHAT_KEY": "unused-volce-fixture"}
     bad = args.copy()
     bad[2] = f"0.0.0.0:{port}"
     assert subprocess.run(bad, env=env, timeout=2, stdout=subprocess.DEVNULL).returncode != 0
@@ -107,6 +108,8 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         finally:
             conn.close()
 
+    missing_key = {k: v for k, v in env.items() if k != "GO_ROUTER_VOLCE_CHAT_KEY"}
+    assert subprocess.run(args, env=missing_key, timeout=2, stdout=subprocess.DEVNULL).returncode != 0
     process = subprocess.Popen(args, env=env)
     try:
         deadline = time.monotonic() + 5
@@ -123,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert call("/healthz")[0] == 200
         assert call("/v1/models", headers={"Origin": "https://unrelated.invalid"})[0] == 403
         assert [m["id"] for m in json.loads(call("/v1/models")[2])["data"]] == [
-            "custom/cancel", "custom/interrupt", "custom/redirect", "custom/success"]
+            "custom/cancel", "custom/interrupt", "custom/redirect", "custom/success", "volceapi/kimi-k3"]
         chat = "/v1/chat/completions"
         code, media, body = call(chat, {"model": "custom/success"})
         assert code == 200 and media == "application/json" and b"fixture" in body
@@ -133,6 +136,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert code == 200 and b"fixture" in body and b"[DONE]" not in body
         assert call(chat, {"model": "custom/redirect"})[0] == 502
         assert call(chat, {"model": "custom/missing"})[0] == 404
+        assert call(chat, {"model": "volceapi/not-configured"})[0] == 404
         with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
             raw = b'{"model":"custom/cancel","stream":true}'
             conn.sendall(
@@ -154,4 +158,4 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         peer.shutdown()
         peer.server_close()
     assert process.returncode == 0
-    print("generic Chat: loopback-only, catalog, authenticated TLS JSON/SSE, journal-first, truncation, cancellation and no redirect PASS")
+    print("generic Chat: loopback-only, two-provider catalog, authenticated TLS JSON/SSE, journal-first, truncation, cancellation and no redirect PASS")

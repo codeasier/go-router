@@ -148,6 +148,28 @@ func requestFields(raw []byte) (map[string]json.RawMessage, bool) {
 	return fields, err == io.EOF
 }
 
+// InputModel validates Chat routing fields before choosing a connection.
+func InputModel(raw []byte) (string, error) {
+	if len(raw) > maxRequest || !utf8.Valid(raw) {
+		return "", ErrRequest
+	}
+	fields, ok := requestFields(raw)
+	var model string
+	if !ok || json.Unmarshal(fields["model"], &model) != nil || model == "" {
+		return "", ErrRequest
+	}
+	if fields["stream"] != nil {
+		var stream *bool
+		if json.Unmarshal(fields["stream"], &stream) != nil || stream == nil {
+			return "", ErrRequest
+		}
+	}
+	return model, nil
+}
+
+// Streaming reports the mode expected by Decode.
+func (p *Prepared) Streaming() bool { return p.stream }
+
 // BodyDigest matches the exact body the dispatcher may send after it commits
 // intent. It never exposes the body itself.
 func (p *Prepared) BodyDigest() [sha256.Size]byte { return sha256.Sum256(p.body) }

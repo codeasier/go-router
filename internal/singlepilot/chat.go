@@ -1,5 +1,4 @@
-// Package singlepilot wires the generic Chat adapter into the single-node
-// inference path. It does not implement provider-specific protocol transforms.
+// Package singlepilot wires configured Chat adapters into single-node inference.
 package singlepilot
 
 import (
@@ -25,41 +24,92 @@ type journal interface {
 	RecordIntent(attemptlog.Intent) error
 }
 
-// New serves one operator-configured Chat connection with an immutable catalog
-// and no fallback or retry. The caller owns the listener and journal lifetime.
-func New(provider string, names []string, baseURL, key string, log journal) (http.Handler, error) {
-	t := &http.Transport{DisableKeepAlives: true, DisableCompression: true,
-		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 32 << 10}
-	return routes(provider, names, baseURL, key, log, t, 30*time.Second)
+type prepared interface {
+	NewRequest(context.Context, string) (*http.Request, error)
+	BodyDigest() [32]byte
+	Decode(context.Context, *http.Response, func([]byte) error) (openaichat.Observation, error)
 }
 
-func routes(provider string, names []string, baseURL, key string, log journal, transport http.RoundTripper, timeout time.Duration) (http.Handler, error) {
-	if len(names) == 0 || len(names) > 128 || log == nil || strings.EqualFold(provider, "openrouter") || strings.EqualFold(provider, "volceapi") {
-		return nil, errors.New("invalid generic Chat connection")
+// Connection is an immutable operator-defined Chat connection.
+type Connection struct {
+	id, key string
+	models  []string
+	prepare func(model string, body []byte, accept string) (prepared, bool, error)
+}
+
+func (Connection) String() string     { return "Chat connection (redacted)" }
+func (c Connection) GoString() string { return c.String() }
+
+func Generic(provider string, names []string, baseURL, key string) (Connection, error) {
+	if strings.EqualFold(provider, "openrouter") || strings.EqualFold(provider, "volceapi") {
+		return Connection{}, errors.New("reserved provider ID")
 	}
 	adapter, err := openaichat.New(baseURL)
 	if err != nil {
-		return nil, err
+		return Connection{}, err
 	}
-	specs := make([]catalog.ModelSpec, 0, len(names))
-	for _, name := range names {
-		if len(provider)+1+len(name) > 128 {
-			return nil, errors.New("catalog ID exceeds journal limit")
+	return Connection{provider, key, append([]string(nil), names...), func(model string, body []byte, _ string) (prepared, bool, error) {
+		p, err := adapter.Prepare(model, body)
+		if err != nil {
+			return nil, false, err
 		}
-		if key != "" && strings.Contains(provider+"/"+name, key) {
-			return nil, errors.New("provider credential overlaps with a public model ID")
+		return p, p.Streaming(), nil
+	}}, nil
+}
+
+func Volce(names []string, key string) Connection {
+	return Connection{"volceapi", key, append([]string(nil), names...), func(model string, body []byte, accept string) (prepared, bool, error) {
+		p, err := openaichat.PrepareVolceChat(model, body, accept)
+		if err != nil {
+			return nil, false, err
 		}
-		specs = append(specs, catalog.ModelSpec{ID: name})
+		return p, p.Streaming(), nil
+	}}
+}
+
+// New mounts selected Chat connections without fallback or retry. The caller
+// owns the listener and the journal lifetime.
+func New(log journal, connections ...Connection) (http.Handler, error) {
+	t := &http.Transport{DisableKeepAlives: true, DisableCompression: true,
+		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 32 << 10}
+	return routes(log, t, 30*time.Second, connections...)
+}
+
+func routes(log journal, transport http.RoundTripper, timeout time.Duration, connections ...Connection) (http.Handler, error) {
+	if log == nil || transport == nil || len(connections) == 0 || len(connections) > 16 || timeout <= 0 {
+		return nil, errors.New("invalid Chat connections")
 	}
-	registry, err := catalog.New([]catalog.ProviderSpec{{ID: provider, Transport: "generic-chat", Models: specs}})
+	specs := make([]catalog.ProviderSpec, 0, len(connections))
+	byID := make(map[string]Connection, len(connections))
+	for _, c := range connections {
+		if len(c.models) == 0 || len(c.models) > 128 || c.prepare == nil {
+			return nil, errors.New("invalid Chat connection")
+		}
+		models := make([]catalog.ModelSpec, 0, len(c.models))
+		for _, name := range c.models {
+			id := c.id + "/" + name
+			if len(id) > 128 {
+				return nil, errors.New("catalog ID exceeds journal limit")
+			}
+			for _, candidate := range connections {
+				if candidate.key != "" && strings.Contains(id, candidate.key) {
+					return nil, errors.New("provider credential overlaps with a public model ID")
+				}
+			}
+			models = append(models, catalog.ModelSpec{ID: name})
+		}
+		probe, _, err := c.prepare(c.models[0], []byte("{}"), "application/json")
+		if err != nil {
+			return nil, err
+		}
+		if _, err = probe.NewRequest(context.Background(), c.key); err != nil {
+			return nil, err
+		}
+		specs = append(specs, catalog.ProviderSpec{ID: c.id, Transport: "provider-chat", Models: models})
+		byID[c.id] = c
+	}
+	registry, err := catalog.New(specs)
 	if err != nil {
-		return nil, err
-	}
-	probe, err := adapter.Prepare(names[0], []byte("{}"))
-	if err != nil {
-		return nil, err
-	}
-	if _, err = probe.NewRequest(context.Background(), key); err != nil {
 		return nil, err
 	}
 	type listedModel struct {
@@ -67,7 +117,7 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 		Object  string `json:"object"`
 		OwnedBy string `json:"owned_by"`
 	}
-	models := make([]listedModel, 0, len(names))
+	models := make([]listedModel, 0)
 	for _, m := range registry.List() {
 		models = append(models, listedModel{m.ID, "model", m.ProviderID})
 	}
@@ -102,33 +152,25 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			}
 			return
 		}
-		var input struct {
-			Model  string
-			Stream bool
-		}
-		if json.Unmarshal(body, &input) != nil || input.Model == "" {
+		modelID, err := openaichat.InputModel(body)
+		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
 		}
-		// Prepare rejects duplicate and case-aliased routing fields before any
-		// intent or network action. The catalog only accepts registered IDs.
-		if _, err = adapter.Prepare("validation", body); err != nil {
-			reject(w, 400, "invalid Chat body")
-			return
-		}
-		model, err := registry.Lookup(input.Model)
+		model, err := registry.Lookup(modelID)
 		if err != nil {
 			reject(w, 404, "unknown model")
 			return
 		}
-		request, err := adapter.Prepare(model.Name, body)
+		connection := byID[model.ProviderID]
+		request, stream, err := connection.prepare(model.Name, body, strings.Join(r.Header.Values("Accept"), ","))
 		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-		outbound, err := request.NewRequest(ctx, key)
+		outbound, err := request.NewRequest(ctx, connection.key)
 		if err != nil {
 			reject(w, 503, "upstream configuration unavailable")
 			return
@@ -160,7 +202,7 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 		_, err = request.Decode(ctx, response, func(data []byte) error {
 			if !started {
 				w.Header().Set("Cache-Control", "no-store")
-				if input.Stream {
+				if stream {
 					w.Header().Set("Content-Type", "text/event-stream")
 				} else {
 					w.Header().Set("Content-Type", "application/json")
@@ -170,7 +212,7 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			if _, err := w.Write(data); err != nil {
 				return err
 			}
-			if input.Stream {
+			if stream {
 				return http.NewResponseController(w).Flush()
 			}
 			return nil
