@@ -60,48 +60,45 @@ func applyGenericChatSchemaFallback(fields map[string]json.RawMessage) error {
 	}
 	var found bool
 	for i, msg := range msgs {
-		m := schemaObject(msg)
-		if m == nil {
-			return ErrRequest
-		} // not a Chat message object; never coerce primitives
-		var role string
-		if found || json.Unmarshal(m["role"], &role) != nil || role != "system" {
+		role, start, end, err := schemaMessageContent(msg)
+		if err != nil {
+			return err
+		}
+		if found || role != "system" {
 			continue
 		}
 		found = true
-		content := m["content"]
-		if len(content) == 0 {
+		if end == 0 {
 			continue
 		}
+		content := msg[start:end]
+		var replacement []byte
 		switch content[0] {
 		case '"':
 			// Splice JSON string literals so existing text (even an escaped
 			// UTF-16 code unit) is not decoded and silently replaced by Go.
 			suffix, _ := json.Marshal("\n\n" + prompt)
-			merged := make([]byte, 0, len(content)+len(suffix)-2)
-			merged = append(merged, content[:len(content)-1]...)
-			m["content"] = append(merged, suffix[1:]...)
+			replacement = make([]byte, 0, len(content)+len(suffix)-2)
+			replacement = append(replacement, content[:len(content)-1]...)
+			replacement = append(replacement, suffix[1:]...)
 		case '[':
-			var parts []json.RawMessage
-			if json.Unmarshal(content, &parts) != nil {
-				return ErrRequest
-			}
 			part, _ := json.Marshal(map[string]string{"type": "text", "text": "\n\n" + prompt})
-			encoded, err := json.Marshal(append(parts, part))
-			if err != nil {
-				return ErrRequest
+			replacement = make([]byte, 0, len(content)+len(part)+1)
+			replacement = append(replacement, content[:len(content)-1]...)
+			if len(bytes.TrimSpace(content[1:len(content)-1])) != 0 {
+				replacement = append(replacement, ',')
 			}
-			m["content"] = encoded
+			replacement = append(replacement, part...)
+			replacement = append(replacement, ']')
 		default:
 			// The reference still rewrites response_format but does not
 			// replace existing content which is neither text nor an array.
 			continue
 		}
-		encoded, err := json.Marshal(m)
-		if err != nil {
-			return ErrRequest
-		}
-		msgs[i] = encoded
+		edited := make([]byte, 0, len(msg)-len(content)+len(replacement))
+		edited = append(edited, msg[:start]...)
+		edited = append(edited, replacement...)
+		msgs[i] = append(edited, msg[end:]...)
 	}
 	if !found {
 		sys, _ := json.Marshal(map[string]string{"role": "system", "content": prompt})
@@ -113,6 +110,46 @@ func applyGenericChatSchemaFallback(fields map[string]json.RawMessage) error {
 	}
 	fields["messages"], fields["response_format"] = encoded, json.RawMessage(`{"type":"json_object"}`)
 	return nil
+}
+
+// Read only the outer message members and the raw content span. Decoding
+// the whole message into a map would collapse a lone UTF-16 surrogate key
+// into U+FFFD and could drop a distinct member. Nested values stay opaque.
+func schemaMessageContent(msg json.RawMessage) (role string, start, end int, err error) {
+	d := json.NewDecoder(bytes.NewReader(msg))
+	if token, e := d.Token(); e != nil || token != json.Delim('{') {
+		return "", 0, 0, ErrRequest
+	}
+	seen := make(map[string]struct{})
+	for d.More() {
+		keyStart := d.InputOffset() // may include the member separator or whitespace
+		token, e := d.Token()
+		key, ok := token.(string)
+		if e != nil || !ok || !schemaScalarEscapes(msg[keyStart:d.InputOffset()]) {
+			return "", 0, 0, ErrRequest
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return "", 0, 0, ErrRequest
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return "", 0, 0, ErrRequest
+		}
+		switch key {
+		case "role":
+			if value[0] == '"' && json.Unmarshal(value, &role) != nil {
+				return "", 0, 0, ErrRequest
+			}
+		case "content":
+			end = int(d.InputOffset())
+			start = end - len(value)
+		}
+	}
+	if token, e := d.Token(); e != nil || token != json.Delim('}') {
+		return "", 0, 0, ErrRequest
+	}
+	return role, start, end, nil
 }
 
 // RawMessage is from the bounded JSON request decoder, not arbitrary input.

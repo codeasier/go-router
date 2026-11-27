@@ -140,3 +140,46 @@ func TestGenericSchemaFallbackRejectsUnsupportedBeforePublication(t *testing.T) 
 		})
 	}
 }
+
+func TestGenericSchemaFallbackMessageMemberNames(t *testing.T) {
+	t.Run("preserve scalar members and raw nested values", func(t *testing.T) {
+		msg := `[{"role":"system","content":"text","\ufffd":"replacement","\ud83d\ude03":"pair","\\ud800":"literal escape","vendor":{"\ud800":"opaque","\ufffd":"distinct"}}]`
+		f := schemaTestFields(t, testSchemaBody("{}", msg))
+		if err := applyGenericChatSchemaFallback(f); err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range []string{`"\ufffd":"replacement"`, `"\ud83d\ude03":"pair"`, `"\\ud800":"literal escape"`, `"vendor":{"\ud800":"opaque","\ufffd":"distinct"}`} {
+			if !bytes.Contains(f["messages"], []byte(part)) {
+				t.Fatalf("lost raw member %s: %s", part, f["messages"])
+			}
+		}
+		var got []map[string]json.RawMessage
+		if err := json.Unmarshal(f["messages"], &got); err != nil || len(got) != 1 {
+			t.Fatalf("invalid messages: %v", err)
+		}
+		var prompt string
+		if json.Unmarshal(got[0]["content"], &prompt) != nil || prompt != "text\n\n"+referenceSchemaPrompt("{}") ||
+			string(got[0]["�"]) != `"replacement"` || string(got[0]["😃"]) != `"pair"` {
+			t.Fatalf("wrong fields or transformed content: %s", f["messages"])
+		}
+	})
+	for _, tc := range []struct{ name, messages string }{
+		{"surrogate and Unicode replacement collision", `[{"role":"system","content":"text","\ud800":"lone","\ufffd":"real"}]`},
+		{"single unpaired low surrogate", `[{"role":"system","content":[],"\udfff":"lone"}]`},
+		{"duplicate content with distinct spelling", `[{"role":"system","content":"first","cont\u0065nt":"second"}]`},
+		{"duplicate Unicode name", `[{"role":"system","content":"text","\ufffd":"first","�":"second"}]`},
+		{"later invalid message is still atomic", `[{"role":"system","content":"text"},{"role":"user","content":"hi","\ud800":null}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := schemaTestFields(t, testSchemaBody("{}", tc.messages))
+			before, _ := json.Marshal(f)
+			if err := applyGenericChatSchemaFallback(f); err != ErrRequest {
+				t.Fatalf("ambiguous member not rejected: %v; messages=%s", err, f["messages"])
+			}
+			after, _ := json.Marshal(f)
+			if !bytes.Equal(before, after) {
+				t.Fatal("fallback committed only part of an invalid request")
+			}
+		})
+	}
+}
