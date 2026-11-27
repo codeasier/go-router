@@ -100,25 +100,19 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			}
 			return
 		}
-		var input struct {
-			Model string
-		}
-		if json.Unmarshal(body, &input) != nil || input.Model == "" {
+		// Check structure before lookup, then apply the real route's model and
+		// stream negotiation once, before recording intent or dispatching.
+		input, err := openaichat.ParseClientRequest(body)
+		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
 		}
-		// Prepare rejects duplicate and case-aliased routing fields before any
-		// intent or network action. The catalog only accepts registered IDs.
-		if _, err = adapter.Prepare("validation", body); err != nil {
-			reject(w, 400, "invalid Chat body")
-			return
-		}
-		model, err := registry.Lookup(input.Model)
+		model, err := registry.Lookup(input.Model())
 		if err != nil {
 			reject(w, 404, "unknown model")
 			return
 		}
-		request, err := adapter.PrepareWithAccept(model.Name, body, r.Header.Values("Accept"))
+		request, err := adapter.PrepareParsed(model.Name, input, r.Header.Values("Accept"))
 		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return

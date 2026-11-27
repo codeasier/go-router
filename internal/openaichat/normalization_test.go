@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+func normalizeGenericChat(fields map[string]json.RawMessage, upstreamStreaming bool) error {
+	n, err := inspectGenericChat(fields)
+	if err != nil {
+		return err
+	}
+	n.apply(fields, upstreamStreaming)
+	return nil
+}
+
 func TestNormalizeGenericChat(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

@@ -5,22 +5,64 @@ import (
 	"encoding/json"
 )
 
-// normalizeGenericChat applies the ordinary generic Chat rules shared with
-// 9router's OpenAI filter and DefaultExecutor. fields must come from the
-// bounded requestFields decoder. upstreamStreaming is the negotiated upstream
-// mode, not simply the value of the optional client stream field.
-func normalizeGenericChat(fields map[string]json.RawMessage, upstreamStreaming bool) error {
+// Inspect the message structure once, before looking up a requested model.
+// Retain only the offsets needed to rewrite exact developer roles later.
+type genericChatNormalization struct {
+	messageArray   bool
+	developerRoles [][2]int
+}
+
+func inspectGenericChat(fields map[string]json.RawMessage) (genericChatNormalization, error) {
+	var result genericChatNormalization
 	messages := bytes.TrimSpace(fields["messages"])
 	if len(messages) > maxRequest {
-		return ErrRequest
+		return result, ErrRequest
 	}
-	if len(messages) > 0 && messages[0] == '[' {
-		normalized, err := normalizeDeveloperRoles(messages)
-		if err != nil {
-			return err
+	if len(messages) == 0 || messages[0] != '[' {
+		return result, nil
+	}
+	result.messageArray = true
+	d := json.NewDecoder(bytes.NewReader(messages))
+	if _, err := d.Token(); err != nil {
+		return result, ErrRequest
+	}
+	for d.More() {
+		var message json.RawMessage
+		if err := d.Decode(&message); err != nil {
+			return result, ErrRequest
 		}
-		if normalized != nil {
-			fields["messages"] = normalized
+		if message[0] != '{' {
+			continue
+		}
+		start, end, err := developerRoleRange(message)
+		if err != nil {
+			return result, err
+		}
+		if end != 0 {
+			base := int(d.InputOffset()) - len(message)
+			result.developerRoles = append(result.developerRoles, [2]int{base + start, base + end})
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return result, ErrRequest
+	}
+	return result, nil
+}
+
+// apply mutates the prepared field map, not the structurally checked input.
+// It implements the scoped 9router OpenAI filter and DefaultExecutor changes.
+func (n genericChatNormalization) apply(fields map[string]json.RawMessage, upstreamStreaming bool) {
+	if n.messageArray {
+		if len(n.developerRoles) != 0 {
+			messages := bytes.TrimSpace(fields["messages"])
+			out := make([]byte, 0, len(messages))
+			cursor := 0
+			for _, span := range n.developerRoles {
+				out = append(out, messages[cursor:span[0]]...)
+				out = append(out, `"system"`...)
+				cursor = span[1]
+			}
+			fields["messages"] = append(out, messages[cursor:]...)
 		}
 
 		// The reference OpenAI filter returns early without a messages array.
@@ -32,48 +74,6 @@ func normalizeGenericChat(fields map[string]json.RawMessage, upstreamStreaming b
 	if !upstreamStreaming && !bytes.Equal(bytes.TrimSpace(fields["stream"]), []byte("true")) {
 		delete(fields, "stream_options")
 	}
-	return nil
-}
-
-// Rewrite only the exact role value in each message object, not arbitrary
-// strings, content parts, nested vendor fields, or their numeric representations.
-// A nil result means nothing changed. Every replacement shortens the input.
-func normalizeDeveloperRoles(messages []byte) ([]byte, error) {
-	d := json.NewDecoder(bytes.NewReader(messages))
-	if _, err := d.Token(); err != nil { // caller checked the opening '['
-		return nil, ErrRequest
-	}
-	var out []byte
-	cursor := 0
-	for d.More() {
-		var message json.RawMessage
-		if err := d.Decode(&message); err != nil {
-			return nil, ErrRequest
-		}
-		if message[0] != '{' {
-			continue
-		}
-		start, end, err := developerRoleRange(message)
-		if err != nil {
-			return nil, err
-		}
-		if end != 0 {
-			base := int(d.InputOffset()) - len(message)
-			if out == nil {
-				out = make([]byte, 0, len(messages))
-			}
-			out = append(out, messages[cursor:base+start]...)
-			out = append(out, `"system"`...)
-			cursor = base + end
-		}
-	}
-	if _, err := d.Token(); err != nil {
-		return nil, ErrRequest
-	}
-	if out != nil {
-		out = append(out, messages[cursor:]...)
-	}
-	return out, nil
 }
 
 // The message is valid JSON from Decode. Reject an ambiguous duplicate role
