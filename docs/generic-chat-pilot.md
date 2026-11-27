@@ -23,6 +23,12 @@ Set `GO_ROUTER_VOLCE_CHAT_KEY` through the local secret environment and add `-vo
 
 The adapted request format is native Chat only, including configured model rewriting, effective SSE negotiation, and model-specific request options. Offline comparison to `codeasier/9router` commit `39a793a282629ad8f1bfd6ce703e5dad26be700a` does not establish real upstream acceptance or full 9router behavior.
 
+## Other native Chat connections
+
+- xAI API-key mode: set `GO_ROUTER_XAI_CHAT_KEY` and pass `-xai-chat-models` with the explicitly selected Chat models. OAuth, Responses, media and Grok CLI are not enabled.
+- Xiaomi Token Plan: set `GO_ROUTER_XIAOMI_CHAT_KEY` and pass `-xiaomi-chat-models mimo-v2.6-pro,mimo-v2.6-flash`. Use `-xiaomi-chat-region` to select `sgp` (default), `cn`, or `ams`. A legacy `xiaomi-tokenplan-cn` import must keep region `cn`; no input model or alias selects an upstream region. The Claude Messages and audio routes are not enabled.
+- OpenCode Go native Chat has an offline request adapter. It is not mounted: explicit session selection and session isolation must be integrated before enabling it in the daemon.
+
 ## Offline acceptance
 
 ```sh
@@ -30,4 +36,4 @@ go build -o /tmp/go-router ./cmd/go-router
 python3 scripts/smoke-generic-chat.py /tmp/go-router
 ```
 
-The test uses a private temporary journal, a local TLS fixture, and dummy credentials. It compares the actual sent body to the journal digest and verifies JSON, SSE, truncation and redirect rejection against a built binary. It does not send traffic to a real supplier. The integration test exercises VolceAPI dispatch against an injected transport; the process smoke validates both providers in the same catalog with no VolceAPI network calls.
+The test uses a private temporary journal, a local TLS fixture, and dummy credentials. It compares the actual sent body to the journal digest and verifies JSON, SSE, truncation and redirect rejection against a built binary. It does not send traffic to a real supplier. The integration test exercises VolceAPI dispatch against an injected transport; the process smoke validates the configured providers in the same catalog without network calls to them.
