@@ -28,9 +28,7 @@ type journal interface {
 // New serves one operator-configured Chat connection with an immutable catalog
 // and no fallback or retry. The caller owns the listener and journal lifetime.
 func New(provider string, names []string, baseURL, key string, log journal) (http.Handler, error) {
-	t := &http.Transport{DisableKeepAlives: true, DisableCompression: true,
-		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 32 << 10}
-	return routes(provider, names, baseURL, key, log, t, 30*time.Second)
+	return routes(provider, names, baseURL, key, log, chatTransport(), 30*time.Second)
 }
 
 func routes(provider string, names []string, baseURL, key string, log journal, transport http.RoundTripper, timeout time.Duration) (http.Handler, error) {
