@@ -25,7 +25,8 @@ for example `GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL=https://proxy.example:8443`
 Accepts only an anonymous HTTP or HTTPS CONNECT proxy **origin**, not arbitrary
 headers, credentials, path, query, fragment, SOCKS, PAC or relay URLs. HTTPS
 also verifies the proxy's certificate; both modes still verify the upstream
-TLS certificate and use the same fixed operator-selected Chat endpoint. Prefer
+TLS certificate and use the same fixed operator-selected Chat endpoint. The
+strict mode uses HTTP/1.1 with one tunnel per request, not HTTP/2 multiplexing. Prefer
 HTTPS on untrusted networks; an HTTP proxy sees the CONNECT authority.
 
 A present but empty/invalid value refuses startup. An unavailable, rejecting or
@@ -33,6 +34,12 @@ untrusted proxy does not retry directly, switch to another proxy, follow a redir
 or disclose the proxy diagnostic. `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`
 are not inputs to either mode. Requests cannot select or override this policy.
 `/readyz` still means local readiness, not a live proxy/authentication check.
+
+Tunnel setup (including waiting for a connection slot, dialing, CONNECT, and TLS
+on both legs) shares a 10-second budget within the existing 30-second Chat request
+budget. A client disconnect also aborts an unfinished tunnel without waiting for
+a response from the proxy. Up to 16 request tunnels may be dialing or active for
+this fixed route. After setup, streaming retains the original Chat request deadline.
 
 This implements the explicit strict-proxy failure boundary in
 `codeasier/9router` at `39a793a282629ad8f1bfd6ce703e5dad26be700a`
@@ -49,4 +56,4 @@ python3 scripts/smoke-generic-chat.py /tmp/go-router
 
 The test uses a private temporary journal, a local TLS fixture, and dummy credentials. It compares the actual sent body to the journal digest and verifies JSON, SSE, truncation and redirect rejection against a built binary. It does not send traffic to a real supplier.
 
-The standard `go test ./cmd/go-router` suite additionally builds the real binary and uses local HTTP/HTTPS CONNECT and TLS fixtures to check enforced tunneling, cancellation, credential separation, rejection without direct fallback, invalid configuration, and untrusted TLS peers.
+The standard `go test ./cmd/go-router` suite additionally builds the real binary and uses local HTTP/HTTPS CONNECT and TLS fixtures to check enforced tunneling, closure of a still-pending CONNECT on cancellation, credential separation, rejection without direct fallback, invalid configuration, and untrusted TLS peers.

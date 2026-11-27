@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -65,6 +66,12 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := atomic.Bool{}
+	type pendingConnect struct {
+		started atomic.Bool
+		seen    chan struct{}
+		closed  chan error
+	}
+	var stall atomic.Pointer[pendingConnect]
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tunnels.Add(1)
 		if r.Method != "CONNECT" || r.Host != target.Host || r.Header.Get("Proxy-Authorization") != "" ||
@@ -75,6 +82,29 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		}
 		if bad.Load() {
 			http.Error(w, "sensitive-proxy-error", http.StatusProxyAuthRequired)
+			return
+		}
+		if held := stall.Load(); held != nil {
+			if !held.started.CompareAndSwap(false, true) {
+				t.Error("duplicate pending CONNECT")
+				w.WriteHeader(500)
+				return
+			}
+			c, rw, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer c.Close()
+			if err := c.SetReadDeadline(time.Now().Add(8 * time.Second)); err != nil {
+				t.Error(err)
+				return
+			}
+			close(held.seen)
+			// Give no response. Observe the peer socket, not merely whether
+			// the client or gateway handler finished its own RoundTrip.
+			_, err = rw.ReadByte()
+			held.closed <- err
 			return
 		}
 		remote, err := net.DialTimeout("tcp", target.Host, 2*time.Second)
@@ -195,6 +225,51 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		t.Run(v.name, func(t *testing.T) {
 			beforeU, beforeT := upstream.Load(), tunnels.Load()
 			run(t, v.p, ca, false, func(gateway string) {
+				held := &pendingConnect{seen: make(chan struct{}), closed: make(chan error, 1)}
+				stall.Store(held)
+				defer stall.Store(nil)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, gateway+"/v1/chat/completions", strings.NewReader(`{"model":"custom/one"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				clientDone := make(chan error, 1)
+				go func() {
+					r, err := client.Do(req)
+					if r != nil {
+						r.Body.Close()
+					}
+					clientDone <- err
+				}()
+				select {
+				case <-held.seen:
+				case <-time.After(2 * time.Second):
+					t.Fatal("proxy did not see CONNECT")
+				}
+				select {
+				case err := <-held.closed:
+					t.Fatalf("proxy socket already stopped before cancellation: %v", err)
+				case <-time.After(75 * time.Millisecond):
+				}
+				cancel()
+				select {
+				case err := <-held.closed:
+					if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+						t.Fatalf("proxy socket did not observe peer closure: %v", err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("proxy CONNECT socket stayed open after client cancellation")
+				}
+				if err := <-clientDone; !errors.Is(err, context.Canceled) {
+					t.Fatalf("client did not observe cancellation: %v", err)
+				}
+				if upstream.Load() != beforeU || tunnels.Load() != beforeT+1 {
+					t.Fatal("pending CONNECT reached upstream or retried")
+				}
+				stall.Store(nil)
+
 				r := post(t, gateway, false)
 				body, err := io.ReadAll(r.Body)
 				r.Body.Close()
@@ -222,7 +297,7 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 					t.Fatal("proxy rejection was not sanitized or fell back")
 				}
 			})
-			if upstream.Load() != beforeU+2 || tunnels.Load() != beforeT+3 || ambient.Load() != 0 {
+			if upstream.Load() != beforeU+2 || tunnels.Load() != beforeT+4 || ambient.Load() != 0 {
 				t.Fatal("unexpected replay, proxy bypass or direct fallback")
 			}
 		})
