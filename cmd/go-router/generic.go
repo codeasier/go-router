@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 
@@ -19,7 +20,13 @@ func prepareGenericChat(addr, provider, models, base, dir string) (*server.Serve
 		return nil, nil, err
 	}
 	closeJournal := func() { _ = journal.Close() }
-	routes, err := singlepilot.New(provider, strings.Split(models, ","), base, os.Getenv("GO_ROUTER_GENERIC_CHAT_KEY"), journal)
+	names, key := strings.Split(models, ","), os.Getenv("GO_ROUTER_GENERIC_CHAT_KEY")
+	var routes http.Handler
+	if proxy, configured := os.LookupEnv("GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL"); configured {
+		routes, err = singlepilot.NewWithStrictProxy(provider, names, base, key, journal, proxy)
+	} else {
+		routes, err = singlepilot.New(provider, names, base, key, journal)
+	}
 	if err != nil {
 		closeJournal()
 		return nil, nil, err
