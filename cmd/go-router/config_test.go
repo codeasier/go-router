@@ -149,7 +149,7 @@ func TestCanceledConfigurationDoesNotPublish(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	stop()
 	config.fence()
-	if changed, err := config.activate(ctx, candidate); changed || !errors.Is(err, context.Canceled) || config.revision() != "old" {
+	if changed, err := config.activateFrom(ctx, config.active.Load(), candidate); changed || !errors.Is(err, context.Canceled) || config.revision() != "old" {
 		t.Fatal("canceled reload published an already read candidate")
 	}
 }

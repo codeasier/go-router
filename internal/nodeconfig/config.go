@@ -18,7 +18,8 @@ import (
 	"github.com/codeasier/go-router/internal/catalog"
 )
 
-const maxConfigBytes = 1 << 20
+// MaxBytes bounds every metadata snapshot, independent of the source.
+const MaxBytes = 1 << 20
 
 var (
 	ErrPathRequired = errors.New("node config: an explicit local file path is required")
@@ -70,7 +71,7 @@ func Load(path string) (*Snapshot, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, ErrRead
 	}
-	if info.Size() > maxConfigBytes {
+	if info.Size() > MaxBytes {
 		return nil, ErrSize
 	}
 	f, err := openRegular(path, info)
@@ -78,14 +79,11 @@ func Load(path string) (*Snapshot, error) {
 		return nil, err
 	}
 	defer f.Close()
-	src, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+	src, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
 		return nil, ErrRead
 	}
-	if len(src) > maxConfigBytes {
-		return nil, ErrSize
-	}
-	return parse(src)
+	return Parse(src)
 }
 
 // The caller's path is trusted. On Unix the open is nonblocking so even
@@ -104,7 +102,12 @@ func openRegular(path string, before os.FileInfo) (*os.File, error) {
 	return f, nil
 }
 
-func parse(src []byte) (*Snapshot, error) {
+// Parse validates one bounded, complete metadata snapshot without retaining src.
+// The digest represents the exact bytes that were validated.
+func Parse(src []byte) (*Snapshot, error) {
+	if len(src) > MaxBytes {
+		return nil, ErrSize
+	}
 	var w wireConfig
 	if !utf8.Valid(src) || json.Unmarshal(src, &w) != nil {
 		return nil, ErrInvalid

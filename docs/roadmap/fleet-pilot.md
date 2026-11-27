@@ -61,6 +61,16 @@ also checks that stopping the Dashboard does not interrupt the data plane.
 It does not implement publication from the Dashboard, ingress reconciliation
 or an in-flight drain. No live upstream or production nodes are involved.
 
+The Linux node-local managed-apply primitive is tested separately. The node
+validates the exact expected revision and digest both in memory and on disk,
+then validates its own route compilation before replacing the restart file.
+A rejection leaves the previous configuration restartable. It assumes a
+node-owned private directory on a local filesystem, exclusive ownership of
+the active slot, and no parallel manual file replacement. A failure after
+the atomic rename is treated as an uncertain durability receipt, not a
+reason to blindly replay a write. This internal primitive does not expose a
+write listener or enable cross-host management.
+
 ## Acceptance
 
 - Add one model in the Dashboard once. Both eligible nodes confirm applying the same revision and serve the intended model. If one node rejects the change, show intended versus applied revision, error and stale telemetry status. Exclude incompatible nodes from new traffic for the affected route without unnecessarily removing healthy unrelated routes.
