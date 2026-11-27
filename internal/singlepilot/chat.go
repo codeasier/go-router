@@ -101,8 +101,7 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			return
 		}
 		var input struct {
-			Model  string
-			Stream bool
+			Model string
 		}
 		if json.Unmarshal(body, &input) != nil || input.Model == "" {
 			reject(w, 400, "invalid Chat body")
@@ -119,7 +118,7 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			reject(w, 404, "unknown model")
 			return
 		}
-		request, err := adapter.Prepare(model.Name, body)
+		request, err := adapter.PrepareWithAccept(model.Name, body, r.Header.Values("Accept"))
 		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
@@ -155,20 +154,16 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			return
 		}
 		started := false
-		observation, err := request.Decode(ctx, response, func(data []byte) error {
+		observation, err := request.DecodeMedia(ctx, response, func(media string, data []byte) error {
 			if !started {
 				w.Header().Set("Cache-Control", "no-store")
-				if input.Stream {
-					w.Header().Set("Content-Type", "text/event-stream")
-				} else {
-					w.Header().Set("Content-Type", "application/json")
-				}
+				w.Header().Set("Content-Type", media)
 				started = true
 			}
 			if _, err := w.Write(data); err != nil {
 				return err
 			}
-			if input.Stream {
+			if media == "text/event-stream" {
 				return http.NewResponseController(w).Flush()
 			}
 			return nil

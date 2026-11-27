@@ -88,18 +88,26 @@ func validHost(host string) bool {
 // Prepared is a fixed request body and its destination. It contains no bearer
 // or caller-supplied headers. Do not log its body or the HTTP request.
 type Prepared struct {
-	endpoint string
-	body     []byte
-	stream   bool
+	endpoint          string
+	body              []byte
+	stream            bool
+	allowImplicitJSON bool
 }
 
 func (p *Prepared) String() string   { return "OpenAI-compatible prepared request (redacted)" }
 func (p *Prepared) GoString() string { return p.String() }
 
-// Prepare overwrites only the model with the catalog-selected upstream name.
-// Tools, multimodal inputs and extension fields pass through unchanged as
-// JSON values; top-level duplicate or case-aliased routing keys are rejected.
+// Prepare routes the default generic Chat request for a catalog-selected model.
+// It validates routing keys and applies the scoped generic normalization used by
+// PrepareWithAccept; unrelated multimodal payload and extension values are retained.
 func (a *Adapter) Prepare(model string, source []byte) (*Prepared, error) {
+	return a.PrepareWithAccept(model, source, nil)
+}
+
+// PrepareWithAccept negotiates ordinary generic Chat like 9router chatCore.
+// The inbound Accept is used only to select a mode, never forwarded. Matching
+// is literal substring matching as in the pinned baseline, not RFC q ranking.
+func (a *Adapter) PrepareWithAccept(model string, source []byte, accept []string) (*Prepared, error) {
 	if a == nil || a.endpoint == "" || len(source) > maxRequest || !utf8.Valid(source) ||
 		model == "" || len(model) > 512 || strings.TrimSpace(model) != model ||
 		!utf8.ValidString(model) || strings.ContainsFunc(model, unicode.IsControl) {
@@ -113,12 +121,27 @@ func (a *Adapter) Prepare(model string, source []byte) (*Prepared, error) {
 	if fields["stream"] != nil && (json.Unmarshal(fields["stream"], &stream) != nil || stream == nil) {
 		return nil, ErrRequest
 	}
+	// A missing stream field is distinct from false and stays absent on wire.
+	// Multiple header lines are equivalent to one comma-separated Fetch header.
+	var acceptJSON, acceptSSE bool
+	for _, value := range accept {
+		acceptJSON = acceptJSON || strings.Contains(value, "application/json")
+		acceptSSE = acceptSSE || strings.Contains(value, "text/event-stream")
+	}
+	upstreamStreaming := !acceptJSON || acceptSSE
+	if stream != nil {
+		upstreamStreaming = *stream
+	}
+	if err := normalizeGenericChat(fields, upstreamStreaming); err != nil {
+		return nil, err
+	}
 	fields["model"], _ = json.Marshal(model)
 	body, err := json.Marshal(fields)
 	if err != nil || len(body) > maxRequest {
 		return nil, ErrRequest
 	}
-	return &Prepared{endpoint: a.endpoint, body: body, stream: stream != nil && *stream}, nil
+	return &Prepared{endpoint: a.endpoint, body: body, stream: upstreamStreaming,
+		allowImplicitJSON: stream == nil && upstreamStreaming && !acceptSSE}, nil
 }
 
 func requestFields(raw []byte) (map[string]json.RawMessage, bool) {
@@ -169,7 +192,9 @@ func (p *Prepared) NewRequest(ctx context.Context, token string) (*http.Request,
 	r.GetBody = nil
 	r.Header.Set("Authorization", "Bearer "+token)
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Accept", "application/json")
+	// Fetch sends */* on the wire when DefaultExecutor omits Accept. Go's
+	// transport supplies no default; declare the observed wire value explicitly.
+	r.Header.Set("Accept", "*/*")
 	if p.stream {
 		r.Header.Set("Accept", "text/event-stream")
 	}
