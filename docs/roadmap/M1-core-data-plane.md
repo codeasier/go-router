@@ -14,7 +14,7 @@ Deliver a usable, benchmarked OpenAI-compatible data plane for the first API-key
 | M1.2 | Provider registry and model catalog | M1.1 |
 | M1.3 | Dispatcher with execution facts and retry classes | M1.1 |
 | M1.4 | OpenAI-compatible chat completions and models endpoints | M1.2, M1.3 |
-| M1.5 | First providers: volceapi, openrouter, opencode-go, custom OpenAI-compatible | M1.4 |
+| M1.5 | First providers: volceapi, opencode-go, custom OpenAI-compatible | M1.4 |
 | M1.6 | Golden tests, upstream simulator, benchmark harness, 9router baseline | M1.5 |
 
 ## M1.1 — Config, auth, and HTTP server skeleton
@@ -95,7 +95,6 @@ Scope:
 
 - Adapter base: request build, auth headers, transport, SSE error detection, usage.
 - `volceapi` (OpenAI/Claude/Responses transports).
-- `openrouter`.
 - `opencode-go`.
 - Custom OpenAI-compatible provider nodes.
 
@@ -105,6 +104,25 @@ Acceptance criteria:
 - Auth header and base URL behavior match the reference.
 - No provider-specific retry bypasses the dispatcher.
 - Usage quality/coverage is recorded; missing usage is not zero-filled.
+
+### First single-instance acceptance
+
+Independently run one gateway process without the Dashboard. The first paired
+acceptance covers **VolceAPI** as an in-scope native provider and **custom
+OpenAI-compatible** connections. Use the exact latest selected patch
+[9router build v0.5.123-patch](https://github.com/codeasier/9router/tree/39a793a282629ad8f1bfd6ce703e5dad26be700a)
+as the initial behavioral reference. OpenRouter is not in the migration.
+
+Compare the selected endpoint, auth and connection headers, model and body
+normalization, ordinary and streaming responses, cancellation, errors, and
+usage against the same isolated fixture. VolceAPI uses protocol-specific
+Chat, Messages and Responses routes; custom OpenAI-compatible connections
+select Chat or Responses via their configured API type. An untested path is
+not parity. Where a strict proxy is configured, verify a failed or missing
+proxy cannot fall back to direct egress. Only after fixture validation run
+one approved live test on each required path. Dashboard and cross-node
+configuration publication are not prerequisites for this single-instance
+acceptance.
 
 ## M1.6 — Golden tests, upstream simulator, benchmark harness, 9router baseline
 

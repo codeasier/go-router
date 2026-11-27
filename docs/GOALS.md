@@ -98,7 +98,6 @@ Acceptance criteria:
 API-key / generic HTTP:
 
 - `volceapi`
-- `openrouter`
 - `xai` (API-key mode)
 - `xiaomi-tokenplan` (legacy id `xiaomi-tokenplan-cn` maps here)
 - custom OpenAI-compatible provider nodes
@@ -126,7 +125,7 @@ OAuth / specialized HTTP:
 ### Out of scope for v1
 
 - Advanced Dashboard features beyond the two-instance operations pilot.
-- Providers not listed above. They remain on the existing 9router deployment and must not receive new connector acceptance work.
+- OpenRouter is excluded. Providers not listed above are out of scope. They remain on the existing 9router deployment and must not receive new connector acceptance work.
 - Test fixtures and stale connections (`kimchi-nope`, bulk `openai-compatible-*` test rows).
 - Async provider task APIs, video generation, and background task polling.
 - Multi-node global exactly-once budgets and cross-node account pooling.

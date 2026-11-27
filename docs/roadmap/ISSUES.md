@@ -13,7 +13,7 @@ The #23 title is retained as recorded in this snapshot. In the current roadmap, 
 | [#3](https://github.com/codeasier/go-router/issues/3) | M1 — Core HTTP data plane | M1.2: provider registry and model catalog | `kind:feature`, `area:core`, `priority:p0` |
 | [#4](https://github.com/codeasier/go-router/issues/4) | M1 — Core HTTP data plane | M1.3: dispatcher with execution facts and retry classes | `kind:feature`, `area:core`, `priority:p0` |
 | [#5](https://github.com/codeasier/go-router/issues/5) | M1 — Core HTTP data plane | M1.4: OpenAI-compatible chat completions and models endpoints | `kind:feature`, `area:core`, `priority:p0` |
-| [#6](https://github.com/codeasier/go-router/issues/6) | M1 — Core HTTP data plane | M1.5: first providers — volceapi, openrouter, opencode-go, custom OpenAI-compatible | `kind:feature`, `area:provider`, `priority:p0` |
+| [#6](https://github.com/codeasier/go-router/issues/6) | M1 — Core HTTP data plane | M1.5: first providers — volceapi, opencode-go, custom OpenAI-compatible | `kind:feature`, `area:provider`, `priority:p0` |
 | [#7](https://github.com/codeasier/go-router/issues/7) | M1 — Core HTTP data plane | M1.6: golden tests, upstream simulator, benchmark harness, 9router baseline | `kind:test`, `kind:benchmark`, `area:core`, `priority:p1` |
 | [#8](https://github.com/codeasier/go-router/issues/8) | M2 — OAuth providers and routing | M2.1: OAuth connection model and token refresh framework | `kind:feature`, `area:oauth`, `priority:p0` |
 | [#9](https://github.com/codeasier/go-router/issues/9) | M2 — OAuth providers and routing | M2.2: codex and codex-backup providers | `kind:feature`, `area:provider`, `area:oauth`, `priority:p0` |

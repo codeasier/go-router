@@ -11,7 +11,6 @@ go-router is an independent Go implementation. 9router is used as a behavioral r
 API-key / generic HTTP:
 
 - `volceapi`
-- `openrouter`
 - `xai` (API-key mode)
 - `xiaomi-tokenplan` (legacy id `xiaomi-tokenplan-cn` maps here)
 - custom OpenAI-compatible provider nodes
@@ -38,7 +37,7 @@ OAuth / specialized HTTP:
 
 ### Excluded
 
-- Providers not listed above.
+- OpenRouter and providers not listed above.
 - Test fixtures and stale connections such as `kimchi-nope` and bulk `openai-compatible-*` test rows.
 - Async provider task APIs, video, background task polling.
 - Multi-node exactly-once budgets and cross-node account pools.
