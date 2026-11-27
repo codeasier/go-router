@@ -46,3 +46,8 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/go-router" ./cmd/go-router
           python3 scripts/smoke-synthetic-chat.py "$RUNNER_TEMP/go-router"
+
+      - name: Loopback generic Chat TLS process smoke
+        run: |
+          go build -o "$RUNNER_TEMP/go-router" ./cmd/go-router
+          python3 scripts/smoke-generic-chat.py "$RUNNER_TEMP/go-router"
