@@ -54,6 +54,13 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
                 self.send_header("Location", "/must-not-follow")
                 self.end_headers()
                 return
+            if model == "limited":
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-After", "30")
+                self.end_headers()
+                self.wfile.write(b'{"error":"opaque-provider-detail"}')
+                return
             stream = json.loads(raw).get("stream", False)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream" if stream else "application/json")
@@ -86,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
 
     args = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-provider", "custom",
             "-generic-chat-base-url", f"https://127.0.0.1:{peer.server_port}/v1",
-            "-generic-chat-models", "success,interrupt,redirect,cancel", "-generic-chat-journal", str(journal)]
+            "-generic-chat-models", "success,interrupt,redirect,cancel,limited", "-generic-chat-journal", str(journal)]
     env = {"GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
            "HTTPS_PROXY": "http://127.0.0.1:1"}
     bad = args.copy()
@@ -123,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert call("/healthz")[0] == 200
         assert call("/v1/models", headers={"Origin": "https://unrelated.invalid"})[0] == 403
         assert [m["id"] for m in json.loads(call("/v1/models")[2])["data"]] == [
-            "custom/cancel", "custom/interrupt", "custom/redirect", "custom/success"]
+            "custom/cancel", "custom/interrupt", "custom/limited", "custom/redirect", "custom/success"]
         chat = "/v1/chat/completions"
         code, media, body = call(chat, {"model": "custom/success"})
         assert code == 200 and media == "application/json" and b"fixture" in body
@@ -132,6 +139,10 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         code, _, body = call(chat, {"model": "custom/interrupt", "stream": True})
         assert code == 200 and b"fixture" in body and b"[DONE]" not in body
         assert call(chat, {"model": "custom/redirect"})[0] == 502
+        for stream in [False, True]:
+            code, media, body = call(chat, {"model": "custom/limited", "stream": stream})
+            assert code == 429 and media == "application/json"
+            assert json.loads(body) == {"error": {"message": "upstream rate limited"}}
         assert call(chat, {"model": "custom/missing"})[0] == 404
         with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
             raw = b'{"model":"custom/cancel","stream":true}'
@@ -146,7 +157,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
                 received.extend(part)
             conn.shutdown(socket.SHUT_RDWR)
         assert canceled.wait(3), "upstream connection remained open after downstream cancel"
-        assert calls == ["success", "success", "interrupt", "redirect", "cancel"]
+        assert calls == ["success", "success", "interrupt", "redirect", "limited", "limited", "cancel"]
     finally:
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
@@ -154,4 +165,4 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         peer.shutdown()
         peer.server_close()
     assert process.returncode == 0
-    print("generic Chat: loopback-only, catalog, authenticated TLS JSON/SSE, journal-first, truncation, cancellation and no redirect PASS")
+    print("generic Chat: loopback-only, catalog, authenticated TLS JSON/SSE, journal-first, truncation, rate limit, cancellation and no redirect PASS")
