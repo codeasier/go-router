@@ -3,7 +3,7 @@
 This adapter is not mounted in the executable. It adds no provider, credential
 source, outbound network access, production configuration, retry, or billing.
 It covers a synthetic **custom OpenAI-compatible API-key** contract for #6;
-VolceAPI, OpenRouter, and OpenCode Go are not accepted by this fixture.
+VolceAPI and OpenCode Go are not accepted by this fixture.
 
 The intended dispatcher integration is:
 
