@@ -71,8 +71,10 @@ For generic OpenAI Chat, exact `developer` roles become `system`, an empty
 is omitted on the effective non-streaming route. Nonempty tools, multimodal
 content and unrelated extension values remain intact. For generic OpenAI-compatible Chat only, supported `json_schema` requests
 use the pinned executor’s schema instruction and `json_object` fallback.
-Tool/result repair, custom headers, or unbounded/malformed schema inputs are
-not supported by this slice.
+Ordinary OpenAI tool-call correlation follows the pinned identifier and
+missing-result rules for supported inputs. The router never executes tools or
+creates new calls. Custom headers and unbounded/malformed inputs are outside
+this slice.
 
 ## Offline acceptance
 
