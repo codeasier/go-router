@@ -51,6 +51,11 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
             assert intent["model"] == f"custom/{model}"
             assert bytes(intent["body_digest"]) == hashlib.sha256(raw).digest()
             calls.append(model)
+            if model == "schema":
+                assert payload["response_format"] == {"type": "json_object"}
+                assert payload["messages"][0]["role"] == "system"
+                assert '\n```json\n{\n  "type": "object"\n}\n```\n' in payload["messages"][0]["content"]
+                assert payload["messages"][1] == {"role": "user", "content": "hello"}
             if model == "normalized":
                 assert payload["messages"] == [
                     {"role": "system", "content": "rules"}, {"role": "user", "content": "hello"}]
@@ -105,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
 
     args = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-provider", "custom",
             "-generic-chat-base-url", f"https://127.0.0.1:{peer.server_port}/v1",
-            "-generic-chat-models", "success,interrupt,redirect,cancel,limited,json-only,normalized", "-generic-chat-journal", str(journal)]
+            "-generic-chat-models", "success,interrupt,redirect,cancel,limited,json-only,normalized,schema", "-generic-chat-journal", str(journal)]
     env = {"GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
            "HTTPS_PROXY": "http://127.0.0.1:1"}
     bad = args.copy()
@@ -142,7 +147,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert call("/healthz")[0] == 200
         assert call("/v1/models", headers={"Origin": "https://unrelated.invalid"})[0] == 403
         assert [m["id"] for m in json.loads(call("/v1/models")[2])["data"]] == [
-            "custom/cancel", "custom/interrupt", "custom/json-only", "custom/limited", "custom/normalized", "custom/redirect", "custom/success"]
+            "custom/cancel", "custom/interrupt", "custom/json-only", "custom/limited", "custom/normalized", "custom/redirect", "custom/schema", "custom/success"]
         chat = "/v1/chat/completions"
         # Pinned 9router ordinary OpenAI client/non-force-stream generic provider.
         # Values are expectations, independently of the upstream fixture.
@@ -187,6 +192,11 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
             "stream_options": {"include_usage": True},
             "messages": [{"role": "developer", "content": "rules"}, {"role": "user", "content": "hello"}],
         })[0] == 200
+        assert call(chat, {
+            "model": "custom/schema", "stream": False,
+            "response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "object"}}},
+            "messages": [{"role": "user", "content": "hello"}],
+        })[0] == 200
         assert call(chat, {"model": "custom/missing"})[0] == 404
         with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
             raw = b'{"model":"custom/cancel","stream":true}'
@@ -202,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
             conn.shutdown(socket.SHUT_RDWR)
         assert canceled.wait(3), "upstream connection remained open after downstream cancel"
         assert calls == ["success"] * (len(accepts) * len(matrix)) + ["json-only"] * 3 + [
-            "interrupt", "redirect", "limited", "limited", "normalized", "cancel"]
+            "interrupt", "redirect", "limited", "limited", "normalized", "schema", "cancel"]
     finally:
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
