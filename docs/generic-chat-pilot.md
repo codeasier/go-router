@@ -69,8 +69,10 @@ or direct fallback modes. No Dashboard or live supplier acceptance is implied.
 For generic OpenAI Chat, exact `developer` roles become `system`, an empty
 `tools` array is omitted when `messages` is an array, and `stream_options`
 is omitted on the effective non-streaming route. Nonempty tools, multimodal
-content and unrelated extension values remain intact. This does not implement
-structured-output fallback, tool/result repair or custom headers.
+content and unrelated extension values remain intact. For generic OpenAI-compatible Chat only, supported `json_schema` requests
+use the pinned executor’s schema instruction and `json_object` fallback.
+Tool/result repair, custom headers, or unbounded/malformed schema inputs are
+not supported by this slice.
 
 ## Offline acceptance
 

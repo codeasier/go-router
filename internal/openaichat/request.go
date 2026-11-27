@@ -184,6 +184,9 @@ func (a *Adapter) PrepareParsed(model string, p *ParsedRequest, accept []string)
 	}
 	fields := maps.Clone(p.fields)
 	p.normalization.apply(fields, upstreamStreaming)
+	if err := applyGenericChatSchemaFallback(fields); err != nil {
+		return nil, err
+	}
 	fields["model"], _ = json.Marshal(model)
 	body, err := json.Marshal(fields)
 	if err != nil || len(body) > maxRequest {
