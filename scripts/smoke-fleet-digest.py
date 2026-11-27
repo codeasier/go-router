@@ -2,6 +2,7 @@
 """Offline real-process test: two isolated gateways and one Dashboard."""
 import contextlib
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import re
@@ -24,9 +25,9 @@ def addresses(count):
             listener.bind(("127.0.0.1", 0))
         return [f"127.0.0.1:{s.getsockname()[1]}" for s in listeners]
 
-def bytes_for(rev, model):
+def bytes_for(rev, *models):
     return json.dumps(dict(schema_version=1, revision=rev, providers=[
-        dict(id="synthetic", transport="chat", models=[dict(id=model)])
+        dict(id="synthetic", transport="synthetic-http", models=[dict(id=model) for model in models])
     ]), separators=(",", ":")).encode()
 
 def get(addr, path="/", headers=None):
@@ -77,17 +78,25 @@ with tempfile.TemporaryDirectory(prefix="go-router-accept-") as directory, conte
     files = [path / "a.json", path / "b.json"]
     for file, body in zip(files, (expected, altered)):
         file.write_bytes(body)
+    journals = [path / "journal-a", path / "journal-b"]
+    logs = [path / "node-a.log", path / "node-b.log"]
+    for journal in journals:
+        journal.mkdir(mode=0o700)
+        subprocess.run([gateway, "-init-synthetic-journal", str(journal)], check=True, env={})
 
-    def launch(cmd, **env):
-        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**env})
+    def launch(cmd, *, stdout=subprocess.DEVNULL, **env):
+        process = subprocess.Popen(cmd, stdout=stdout, stderr=subprocess.DEVNULL, env={**env})
         stack.callback(terminate, process)
         return process
 
-    def start_node(n):
+    def start_node(n, *, synthetic=True):
         addr1, addr2 = [(a, am), (b, bm)][n]
-        return launch([gateway, "-addr", addr1, "-admin-addr", addr2,
-                       "-node-id", ["pilot-a", "pilot-b"][n],
-                       "-config", str(files[n])], GO_ROUTER_MANAGEMENT_KEY=keys[n])
+        args = [gateway, "-addr", addr1, "-admin-addr", addr2,
+                "-node-id", ["pilot-a", "pilot-b"][n], "-config", str(files[n])]
+        if synthetic:
+            args += ["-synthetic-journal", str(journals[n])]
+        with logs[n].open("ab") as log:
+            return launch(args, stdout=log, GO_ROUTER_MANAGEMENT_KEY=keys[n])
 
     def status(addr, n):
         return json.loads(get(addr, "/admin/v1/status", {"Authorization": "Bearer " + keys[n]}))
@@ -138,18 +147,23 @@ with tempfile.TemporaryDirectory(prefix="go-router-accept-") as directory, conte
     print("PASS: same revision label, different bytes; only the expected digest matches")
     terminate(p_b)
     files[1].write_bytes(expected)
-    p_b = start_node(1)
-    wait(p_dash, lambda: get(dash), lambda page: check_rows(page, "Matched", "Matched"))
+    p_b = start_node(1, synthetic=False)
+    both = wait(p_dash, lambda: get(dash), lambda page: check_rows(page, "Matched", "Matched"))
+    assert "Ready" in rows(both)["pilot-a"] and "Not ready" in rows(both)["pilot-b"]
     preflight(True, 0, ["Matched", "Matched"])
-    print("PASS: the Dashboard and preflight confirm both nodes converge on the same bytes")
+    assert status(am, 0)["ready"] and not status(bm, 1)["ready"]
+    print("PASS: identical bytes can converge while one node is still not ready")
+    terminate(p_b)
+    p_b = start_node(1)
+    wait(p_b, lambda: status(bm, 1), lambda s: s["ready"])
 
     replacement = path / "next.json"
+    before_rejection = logs[0].stat().st_size
     replacement.write_bytes(b"{")
     replacement.replace(files[0])
     p_a.send_signal(signal.SIGHUP)
-    # Observe eventual stability after allowing the reload loop to process the
-    # malformed candidate; the next valid reload supplies positive proof.
-    time.sleep(0.35)
+    wait(p_a, lambda: logs[0].read_bytes()[before_rejection:],
+         lambda log: b"node configuration reload rejected" in log)
     assert status(am, 0)["applied_digest"] == dg
     revised = bytes_for("revision-two", "alpha")
     replacement.write_bytes(revised)
@@ -161,3 +175,95 @@ with tempfile.TemporaryDirectory(prefix="go-router-accept-") as directory, conte
     wait(p_dash, lambda: get(dash), lambda page: check_rows(page, "Drift", "Matched"))
     assert status(bm, 1)["applied_digest"] == dg
     print("PASS: invalid reload retains digest; valid reload changes revision and digest only on A")
+
+
+    # Rehearse the intended controller contract with operator-owned local
+    # publication, not a Dashboard write or an ingress policy change.
+    def reload_node(proc, node, payload):
+        staged = files[node].with_suffix(".next")
+        staged.write_bytes(payload)
+        staged.replace(files[node])
+        proc.send_signal(signal.SIGHUP)
+
+    def wait_revision(proc, admin, node, revision, payload):
+        digest = hashlib.sha256(payload).hexdigest()
+        return wait(proc, lambda: status(admin, node), lambda s: s == {
+            "node_id": ["pilot-a", "pilot-b"][node], "ready": True,
+            "applied_revision": revision, "applied_digest": digest,
+        })
+
+    def observe_candidate(revision, payload, expected, expected_ready):
+        path_candidate = path / f"{revision}.json"
+        path_candidate.write_bytes(payload)
+        args = [dashboard, "preflight", "-config", str(inv), "-candidate",
+                str(path_candidate), "-node", "pilot-a", "-node", "pilot-b", "-check"]
+        result = subprocess.run(args, env={
+            "GO_ROUTER_DASHBOARD_KEY_A": keys[0], "GO_ROUTER_DASHBOARD_KEY_B": keys[1],
+        }, timeout=5, capture_output=True, text=True)
+        assert not result.stderr and result.returncode == (0 if expected == ["Matched"] * 2 else 1)
+        report = json.loads(result.stdout)
+        assert report["target"] == {"desired_revision": revision,
+                                    "desired_digest": hashlib.sha256(payload).hexdigest()}
+        assert [row["comparison"] for row in report["nodes"]] == expected
+        assert [row["observation"] == "Ready" for row in report["nodes"]] == expected_ready
+        assert report["converged"] is (expected == ["Matched"] * 2)
+        assert inv.read_bytes() == original_inventory and path_candidate.read_bytes() == payload
+
+    def model_list(addr):
+        return [row["id"] for row in json.loads(get(addr, "/v1/models"))["data"]]
+
+    def check_chat(addr, model, expected_status):
+        host, port = addr.rsplit(":", 1)
+        with contextlib.closing(http.client.HTTPConnection(host, int(port), timeout=2)) as conn:
+            conn.request("POST", "/v1/chat/completions", json.dumps({
+                "model": "synthetic/" + model, "stream": True,
+                "messages": [{"role": "user", "content": "isolated fleet fixture"}],
+            }), {"Content-Type": "application/json"})
+            response = conn.getresponse()
+            body = response.read()
+            assert response.status == expected_status
+            if expected_status == 200:
+                assert f'"model":"{model}"'.encode() in body and b"data: [DONE]" in body
+                return response.getheader("X-Request-ID")
+            return None
+
+    release = bytes_for("pilot-add", "alpha", "charlie")
+    reload_node(p_a, 0, release)
+    wait_revision(p_a, am, 0, "pilot-add", release)
+    before_rejection = logs[1].stat().st_size
+    reload_node(p_b, 1, b"{")
+    wait(p_b, lambda: logs[1].read_bytes()[before_rejection:],
+         lambda log: b"node configuration reload rejected" in log)
+    wait_revision(p_b, bm, 1, "revision-one", expected)
+    observe_candidate("pilot-add", release, ["Matched", "Drift"], [True, True])
+    assert model_list(a) == ["synthetic/alpha", "synthetic/charlie"] and model_list(b) == ["synthetic/alpha"]
+    id_a = check_chat(a, "charlie", 200)
+    assert check_chat(b, "charlie", 404) is None
+    id_b = check_chat(b, "alpha", 200)
+    print("PASS: partial apply is not convergence; rejected node continues serving last accepted model")
+
+    # Retry exactly the planned bytes only after B positively rejected the bad
+    # file and while A already matches. Successful apply is independent proof.
+    reload_node(p_b, 1, release)
+    wait_revision(p_b, bm, 1, "pilot-add", release)
+    observe_candidate("pilot-add", release, ["Matched", "Matched"], [True, True])
+    assert model_list(a) == model_list(b) == ["synthetic/alpha", "synthetic/charlie"]
+
+    # A stopped controller does not take down the data planes.
+    terminate(p_dash)
+    assert model_list(a) == model_list(b) == ["synthetic/alpha", "synthetic/charlie"]
+
+    rollback = bytes_for("pilot-rollback", "alpha")
+    for proc, admin, node in ((p_a, am, 0), (p_b, bm, 1)):
+        reload_node(proc, node, rollback)
+        wait_revision(proc, admin, node, "pilot-rollback", rollback)
+    observe_candidate("pilot-rollback", rollback, ["Matched", "Matched"], [True, True])
+    assert model_list(a) == model_list(b) == ["synthetic/alpha"]
+    assert check_chat(a, "charlie", 404) is None
+    assert check_chat(b, "charlie", 404) is None
+    assert id_a and id_b
+    for journal, request_id in zip(journals, (id_a, id_b)):
+        log = (journal / "dispatch-intents.v1").read_bytes()
+        assert len(log.splitlines()) == 2 and request_id.encode() in log
+        assert b"isolated fleet fixture" not in log
+    print("PASS: retry converges, controller loss is independent, fresh rollback restores both models")

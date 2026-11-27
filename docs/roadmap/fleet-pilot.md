@@ -52,6 +52,15 @@ exact bytes. Preview is offline; `-check` provides independent fresh receipts
 without writing files or changing routing. Candidate distribution itself remains
 manual in this stage.
 
+CI rehearses manual publication over two isolated synthetic gateways: a
+rejected candidate produces a split receipt and the rejected node still
+serves its previous model; applying the intended bytes to that node converges
+the fleet; rollback under a fresh revision restores both earlier catalogs.
+Matching bytes with one node not ready is covered separately. The rehearsal
+also checks that stopping the Dashboard does not interrupt the data plane.
+It does not implement publication from the Dashboard, ingress reconciliation
+or an in-flight drain. No live upstream or production nodes are involved.
+
 ## Acceptance
 
 - Add one model in the Dashboard once. Both eligible nodes confirm applying the same revision and serve the intended model. If one node rejects the change, show intended versus applied revision, error and stale telemetry status. Exclude incompatible nodes from new traffic for the affected route without unnecessarily removing healthy unrelated routes.
