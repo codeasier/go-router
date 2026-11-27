@@ -17,6 +17,23 @@ The base path is used as written, with `/chat/completions` appended; include `/v
 
 The dispatch journal is required: its intent is persisted before forwarding a request. A recorded intent without a complete application result does not prove successful upstream execution. A failed or interrupted stream is not automatically retried. An upstream 429 returns a sanitized JSON 429 before any stream begins, without forwarding the provider error body or retry headers. A full journal refuses new dispatch; this pilot does not rotate or delete records.
 
+## Generic Chat stream negotiation
+
+An explicit JSON body `stream: true` or `false` selects SSE or JSON respectively,
+regardless of client `Accept`. If omitted, this ordinary Chat path prefers SSE
+unless `Accept` contains `application/json` and not `text/event-stream`. This
+matches the literal checks in 9router `39a793a2`; it does not rank MIME quality
+values or detect special client tools. The body keeps its original stream field
+(or lack of one). The only upstream `Accept` values are `text/event-stream` or
+`*/*` (the baseline Fetch default for non-streaming); client headers are not
+copied upstream.
+
+If an upstream instead returns valid Chat JSON when neither the stream field nor
+an explicit SSE preference was supplied, the pilot preserves that JSON response.
+It does not convert JSON to SSE or aggregate SSE into JSON; explicit mismatches
+are rejected. This is a local compatibility boundary, not a claim of response
+transformation parity with 9router.
+
 ## Optional strict egress for this generic Chat connection
 
 Leave `GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL` **unset** for the original direct
@@ -46,6 +63,14 @@ This implements the explicit strict-proxy failure boundary in
 (`open-sse/utils/proxyFetch.js`), not its pool selection, bypass patterns,
 authenticated proxies, environment precedence, provider-specific transports,
 or direct fallback modes. No Dashboard or live supplier acceptance is implied.
+
+## Scoped request normalization
+
+For generic OpenAI Chat, exact `developer` roles become `system`, an empty
+`tools` array is omitted when `messages` is an array, and `stream_options`
+is omitted on the effective non-streaming route. Nonempty tools, multimodal
+content and unrelated extension values remain intact. This does not implement
+structured-output fallback, tool/result repair or custom headers.
 
 ## Offline acceptance
 

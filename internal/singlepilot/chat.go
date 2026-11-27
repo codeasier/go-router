@@ -100,26 +100,19 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			}
 			return
 		}
-		var input struct {
-			Model  string
-			Stream bool
-		}
-		if json.Unmarshal(body, &input) != nil || input.Model == "" {
+		// Check structure before lookup, then apply the real route's model and
+		// stream negotiation once, before recording intent or dispatching.
+		input, err := openaichat.ParseClientRequest(body)
+		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
 		}
-		// Prepare rejects duplicate and case-aliased routing fields before any
-		// intent or network action. The catalog only accepts registered IDs.
-		if _, err = adapter.Prepare("validation", body); err != nil {
-			reject(w, 400, "invalid Chat body")
-			return
-		}
-		model, err := registry.Lookup(input.Model)
+		model, err := registry.Lookup(input.Model())
 		if err != nil {
 			reject(w, 404, "unknown model")
 			return
 		}
-		request, err := adapter.Prepare(model.Name, body)
+		request, err := adapter.PrepareParsed(model.Name, input, r.Header.Values("Accept"))
 		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
@@ -155,20 +148,16 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			return
 		}
 		started := false
-		observation, err := request.Decode(ctx, response, func(data []byte) error {
+		observation, err := request.DecodeMedia(ctx, response, func(media string, data []byte) error {
 			if !started {
 				w.Header().Set("Cache-Control", "no-store")
-				if input.Stream {
-					w.Header().Set("Content-Type", "text/event-stream")
-				} else {
-					w.Header().Set("Content-Type", "application/json")
-				}
+				w.Header().Set("Content-Type", media)
 				started = true
 			}
 			if _, err := w.Write(data); err != nil {
 				return err
 			}
-			if input.Stream {
+			if media == "text/event-stream" {
 				return http.NewResponseController(w).Flush()
 			}
 			return nil
