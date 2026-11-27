@@ -184,6 +184,9 @@ func (a *Adapter) PrepareParsed(model string, p *ParsedRequest, accept []string)
 	}
 	fields := maps.Clone(p.fields)
 	p.normalization.apply(fields, upstreamStreaming)
+	if err := applyGenericChatToolCorrelation(fields); err != nil {
+		return nil, err
+	}
 	if err := applyGenericChatSchemaFallback(fields); err != nil {
 		return nil, err
 	}
