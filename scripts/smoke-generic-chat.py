@@ -87,9 +87,11 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
     args = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-provider", "custom",
             "-generic-chat-base-url", f"https://127.0.0.1:{peer.server_port}/v1",
             "-generic-chat-models", "success,interrupt,redirect,cancel", "-generic-chat-journal", str(journal),
-            "-volce-chat-models", "kimi-k3"]
+            "-volce-chat-models", "kimi-k3", "-xai-chat-models", "grok-fixture",
+            "-xiaomi-chat-models", "mimo-v2.6-pro", "-xiaomi-chat-region", "cn"]
     env = {"GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
-           "HTTPS_PROXY": "http://127.0.0.1:1", "GO_ROUTER_VOLCE_CHAT_KEY": "unused-volce-fixture"}
+           "HTTPS_PROXY": "http://127.0.0.1:1", "GO_ROUTER_VOLCE_CHAT_KEY": "unused-volce-fixture",
+           "GO_ROUTER_XAI_CHAT_KEY": "unused-xai-fixture", "GO_ROUTER_XIAOMI_CHAT_KEY": "unused-xiaomi-fixture"}
     bad = args.copy()
     bad[2] = f"0.0.0.0:{port}"
     assert subprocess.run(bad, env=env, timeout=2, stdout=subprocess.DEVNULL).returncode != 0
@@ -126,7 +128,8 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert call("/healthz")[0] == 200
         assert call("/v1/models", headers={"Origin": "https://unrelated.invalid"})[0] == 403
         assert [m["id"] for m in json.loads(call("/v1/models")[2])["data"]] == [
-            "custom/cancel", "custom/interrupt", "custom/redirect", "custom/success", "volceapi/kimi-k3"]
+            "custom/cancel", "custom/interrupt", "custom/redirect", "custom/success", "volceapi/kimi-k3",
+            "xai/grok-fixture", "xiaomi-tokenplan/mimo-v2.6-pro"]
         chat = "/v1/chat/completions"
         code, media, body = call(chat, {"model": "custom/success"})
         assert code == 200 and media == "application/json" and b"fixture" in body
@@ -158,4 +161,4 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         peer.shutdown()
         peer.server_close()
     assert process.returncode == 0
-    print("generic Chat: loopback-only, two-provider catalog, authenticated TLS JSON/SSE, journal-first, truncation, cancellation and no redirect PASS")
+    print("generic Chat: loopback-only, multi-provider catalog, authenticated TLS JSON/SSE, journal-first, truncation, cancellation and no redirect PASS")

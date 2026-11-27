@@ -167,3 +167,54 @@ func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
 		t.Fatal("dispatch count", calls)
 	}
 }
+
+func TestXAIAndXiaomiDispatchUseTheirOwnEndpointAndKey(t *testing.T) {
+	xiaomi, err := Xiaomi([]string{"mimo-v2.6-pro"}, "cn", "xiaomi-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	h, err := routes(journalFunc(func(in attemptlog.Intent) error { return nil }),
+		roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			switch calls {
+			case 1:
+				if r.URL.String() != openaichat.XAIChatBaseURL+"/chat/completions" || r.Header.Get("Authorization") != "Bearer xai-key" {
+					t.Fatal("wrong xAI connection")
+				}
+			case 2:
+				if r.URL.String() != openaichat.XiaomiTokenPlanChatBaseURL("cn")+"/chat/completions" || r.Header.Get("Authorization") != "Bearer xiaomi-key" {
+					t.Fatal("wrong Xiaomi connection")
+				}
+			default:
+				t.Fatal("unexpected outbound")
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"y"}}]}`))}, nil
+		}), time.Second, XAI([]string{"grok-fixture"}, "xai-key"), xiaomi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"xai/grok-fixture", "xiaomi-tokenplan/mimo-v2.6-pro"} {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"`+m+`","stream":false}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	if calls != 2 {
+		t.Fatal(calls)
+	}
+	bad, err := Xiaomi([]string{"mimo-v2.6-pro", "audio"}, "cn", "xiaomi-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = New(journalFunc(func(attemptlog.Intent) error { return nil }), bad); err == nil {
+		t.Fatal("listed non-Chat model")
+	}
+	if _, err = Xiaomi([]string{"mimo-v2.6-pro"}, "wrong", "xiaomi-key"); err == nil {
+		t.Fatal("accepted ambiguous region")
+	}
+}

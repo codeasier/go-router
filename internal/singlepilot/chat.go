@@ -41,7 +41,9 @@ func (Connection) String() string     { return "Chat connection (redacted)" }
 func (c Connection) GoString() string { return c.String() }
 
 func Generic(provider string, names []string, baseURL, key string) (Connection, error) {
-	if strings.EqualFold(provider, "openrouter") || strings.EqualFold(provider, "volceapi") {
+	switch strings.ToLower(provider) {
+	case "openrouter", "volceapi", "xai", "xiaomi-tokenplan", "xiaomi-tokenplan-cn", "opencode-go":
+
 		return Connection{}, errors.New("reserved provider ID")
 	}
 	adapter, err := openaichat.New(baseURL)
@@ -65,6 +67,30 @@ func Volce(names []string, key string) Connection {
 		}
 		return p, p.Streaming(), nil
 	}}
+}
+
+func XAI(names []string, key string) Connection {
+	return Connection{"xai", key, append([]string(nil), names...), func(model string, body []byte, accept string) (prepared, bool, error) {
+		p, err := openaichat.PrepareXAIChat(model, body, accept)
+		if err != nil {
+			return nil, false, err
+		}
+		return p, p.Streaming(), nil
+	}}
+}
+func Xiaomi(names []string, region, key string) (Connection, error) {
+	// The raw reference defaults unknown regions to Singapore. Require an
+	// explicit valid region in operator config rather than hiding a typo.
+	if region != "" && region != "sgp" && region != "cn" && region != "ams" {
+		return Connection{}, errors.New("invalid Xiaomi Chat region")
+	}
+	return Connection{"xiaomi-tokenplan", key, append([]string(nil), names...), func(model string, body []byte, accept string) (prepared, bool, error) {
+		p, err := openaichat.PrepareXiaomiTokenPlanChat(region, model, body, accept)
+		if err != nil {
+			return nil, false, err
+		}
+		return p, p.Streaming(), nil
+	}}, nil
 }
 
 // New mounts selected Chat connections without fallback or retry. The caller
@@ -96,14 +122,14 @@ func routes(log journal, transport http.RoundTripper, timeout time.Duration, con
 					return nil, errors.New("provider credential overlaps with a public model ID")
 				}
 			}
+			probe, _, err := c.prepare(name, []byte("{}"), "application/json")
+			if err != nil {
+				return nil, err
+			}
+			if _, err = probe.NewRequest(context.Background(), c.key); err != nil {
+				return nil, err
+			}
 			models = append(models, catalog.ModelSpec{ID: name})
-		}
-		probe, _, err := c.prepare(c.models[0], []byte("{}"), "application/json")
-		if err != nil {
-			return nil, err
-		}
-		if _, err = probe.NewRequest(context.Background(), c.key); err != nil {
-			return nil, err
 		}
 		specs = append(specs, catalog.ProviderSpec{ID: c.id, Transport: "provider-chat", Models: models})
 		byID[c.id] = c
