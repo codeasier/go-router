@@ -222,16 +222,13 @@ func normalizeHistoryCall(raw json.RawMessage, i, j int) (string, json.RawMessag
 	// JS stringifies truthy non-string arguments; JSON string arguments
 	// (including invalid inner JSON) are syntactic history, not executable.
 	if a := fn["arguments"]; len(a) > 0 && a[0] != '"' && string(a) != "null" && string(a) != "false" {
-		var p schemaPrinter
+		// Bound the compact representation, not an intermediate indented form.
+		p := schemaPrinter{compact: true}
 		if !schemaScalarEscapes(a) || !p.value(a, 0) {
 			return "", nil, ErrRequest
 		}
 		if string(p.out) != "0" { // covers 0, -0 and other zero numerals
-			var compact bytes.Buffer
-			if json.Compact(&compact, p.out) != nil {
-				return "", nil, ErrRequest
-			}
-			fn["arguments"], _ = json.Marshal(compact.String())
+			fn["arguments"], _ = json.Marshal(string(p.out))
 			call["function"], err = json.Marshal(fn)
 			if err != nil {
 				return "", nil, ErrRequest

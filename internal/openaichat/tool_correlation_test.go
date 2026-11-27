@@ -148,3 +148,67 @@ func TestCorrelationExpansionBoundAndEscapes(t *testing.T) {
 		t.Fatalf("lost opaque value: %s %v", fields["messages"], err)
 	}
 }
+
+// The payload and outbound body are both below maxRequest, although the
+// intermediate pretty-printed JSON from the former implementation was not.
+func TestPrepareGenericLargeCompactToolArguments(t *testing.T) {
+	const sampleCount = 54000
+	prefix := `{"model":"fixture","stream":false,"messages":[{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"f","arguments":`
+	suffix := `}}]},{"role":"user","content":"after"}]}`
+	input := prefix + `{"samples":[` + strings.Repeat("1, ", sampleCount-1) + "1]}" + suffix
+	if len(input) >= maxRequest {
+		t.Fatal("fixture must fit the ingress limit")
+	}
+	a, err := New("https://127.0.0.1/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.Prepare("fixture", []byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.body) >= maxRequest {
+		t.Fatal("prepared body must fit the outbound limit")
+	}
+	var got struct {
+		Messages []struct {
+			Role       string
+			ToolCallID string `json:"tool_call_id"`
+			ToolCalls  []struct {
+				ID       string
+				Function struct{ Arguments string }
+			} `json:"tool_calls"`
+		}
+	}
+	want := `{"samples":[` + strings.Repeat("1,", sampleCount-1) + "1]}"
+	if err := json.Unmarshal(p.body, &got); err != nil || len(got.Messages) != 3 ||
+		len(got.Messages[0].ToolCalls) != 1 || got.Messages[0].ToolCalls[0].Function.Arguments != want ||
+		got.Messages[1].Role != "tool" || got.Messages[1].ToolCallID != "call_msg0_tc0_f" ||
+		got.Messages[0].ToolCalls[0].ID != got.Messages[1].ToolCallID {
+		t.Fatalf("large history lost its exact compact arguments or correlation: %v", err)
+	}
+
+	// Compact JSON alone fits, but encoding quotes inside a JSON string
+	// makes the final outbound representation too large.
+	large := "[" + strings.Repeat(`{"a":"b"},`, 20000) + `{"a":"b"}]`
+	if len(prefix)+len(large)+len(suffix) >= maxRequest {
+		t.Fatal("oversize outbound fixture must fit the ingress limit")
+	}
+	if _, err := a.Prepare("fixture", []byte(prefix+large+suffix)); !errors.Is(err, ErrRequest) {
+		t.Fatalf("oversize outbound body should still be rejected: %v", err)
+	}
+}
+
+func TestGenericCompactToolArgumentsECMAScript(t *testing.T) {
+	// Exercise numeric-index sorting, large-number rounding, UTF-16 pairs,
+	// literal U+FFFD, U+2028, U+2029, and HTML/control string escaping.
+	input := json.RawMessage(`{"02":9007199254740993,"4294967295":1e21,"2":1e-6,"1":-0,"z":["\ud83d\ude00","�","\u2028","\u2029","<>&","\b\r\t\u0000"]}`)
+	p := schemaPrinter{compact: true}
+	if !schemaScalarEscapes(input) || !p.value(input, 0) {
+		t.Fatal("valid ECMAScript values refused")
+	}
+	want := `{"1":0,"2":0.000001,"02":9007199254740992,"4294967295":1e+21,"z":["😀","�","` + "\u2028" + `","` + "\u2029" + `","<>&","\b\r\t\u0000"]}`
+	if string(p.out) != want {
+		t.Fatalf("compact output %q, want %q", p.out, want)
+	}
+}

@@ -161,9 +161,13 @@ func schemaObject(raw json.RawMessage) map[string]json.RawMessage {
 	return m
 }
 
-// schemaPrinter mirrors JSON.stringify(value, null, 2). Go maps alone lose
-// non-index property insertion order. Bound both expanded output and recursion.
-type schemaPrinter struct{ out []byte }
+// schemaPrinter mirrors JSON.stringify: indented for schema prompts, compact
+// for tool arguments. Go maps alone lose non-index property insertion order.
+// The byte limit applies directly to the selected output form.
+type schemaPrinter struct {
+	out     []byte
+	compact bool
+}
 
 const maxSchemaDepth = 64
 
@@ -175,7 +179,7 @@ func (p *schemaPrinter) add(s string) bool {
 	return true
 }
 func (p *schemaPrinter) newline(level int) bool {
-	return p.add("\n") && p.add(strings.Repeat("  ", level))
+	return p.compact || (p.add("\n") && p.add(strings.Repeat("  ", level)))
 }
 func (p *schemaPrinter) quoted(s string) bool {
 	// JS JSON strings don't escape HTML, slash, DEL, U+2028 or U+2029.
@@ -265,11 +269,15 @@ func (p *schemaPrinter) value(raw json.RawMessage, level int) bool {
 		if !p.add(open) {
 			return false
 		}
+		colon := ": "
+		if p.compact {
+			colon = ":"
+		}
 		for i, e := range items {
 			if i > 0 && !p.add(",") {
 				return false
 			}
-			if !p.newline(level+1) || (object && (!p.quoted(e.key) || !p.add(": "))) || !p.value(e.val, level+1) {
+			if !p.newline(level+1) || (object && (!p.quoted(e.key) || !p.add(colon))) || !p.value(e.val, level+1) {
 				return false
 			}
 		}
