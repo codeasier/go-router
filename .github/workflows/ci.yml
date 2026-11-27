@@ -36,7 +36,7 @@ jobs:
       - name: build
         run: go build ./...
 
-      - name: Two-process fleet configuration digest smoke
+      - name: Two-node fleet apply and rollback smoke
         run: |
           go build -o "$RUNNER_TEMP/go-router" ./cmd/go-router
           go build -o "$RUNNER_TEMP/go-router-dashboard" ./cmd/go-router-dashboard
