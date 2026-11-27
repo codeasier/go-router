@@ -157,7 +157,7 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			return
 		}
 		started := false
-		_, err = request.Decode(ctx, response, func(data []byte) error {
+		observation, err := request.Decode(ctx, response, func(data []byte) error {
 			if !started {
 				w.Header().Set("Cache-Control", "no-store")
 				if input.Stream {
@@ -176,6 +176,10 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 			return nil
 		})
 		if err != nil && !started {
+			if ctx.Err() == nil && errors.Is(err, openaichat.ErrHTTPStatus) && observation.HTTPStatus == http.StatusTooManyRequests {
+				reject(w, http.StatusTooManyRequests, "upstream rate limited")
+				return
+			}
 			upstreamFailure(w, ctx, err)
 		}
 		// An interrupted stream ends without a fabricated [DONE] or a second call.

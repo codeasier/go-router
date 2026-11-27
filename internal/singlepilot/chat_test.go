@@ -34,6 +34,7 @@ func TestChatDispatch(t *testing.T) {
 		{"SSE", `{"model":"custom/a","stream":true}`, "text/event-stream", chunk + "data: [DONE]\n\n", "[DONE]", 200, 200, 1, false, false},
 		{"interrupted SSE", `{"model":"custom/a","stream":true}`, "text/event-stream", chunk, chunk, 200, 200, 1, false, false},
 		{"external redirect", `{"model":"custom/a"}`, "application/json", "sensitive-refused", "invalid upstream", 502, 307, 1, false, false},
+		{"upstream rate limit", `{"model":"custom/a"}`, "application/json", "sensitive-refused", "upstream rate limited", 429, 429, 1, false, false},
 		{"upstream timeout", `{"model":"custom/a"}`, "application/json", "", "upstream timeout", 504, 0, 1, false, true},
 		{"journal refused", `{"model":"custom/a"}`, "application/json", "", "journal unavailable", 503, 0, 0, true, false},
 		{"wrong model", `{"model":"custom/b"}`, "application/json", "", "unknown model", 404, 0, 0, false, false},
