@@ -32,11 +32,7 @@ func chatTransport() *http.Transport {
 // proxy. An empty/malformed proxy is an error, never permission to go direct.
 // The generic adapter constructs only HTTPS requests to its fixed upstream.
 func NewWithStrictProxy(provider string, names []string, baseURL, key string, log journal, raw string) (http.Handler, error) {
-	proxy, err := strictProxyOrigin(raw)
-	if err != nil {
-		return nil, err
-	}
-	return routes(provider, names, baseURL, key, log, newStrictProxyTransport(proxy, strictProxySetupTimeout), 30*time.Second)
+	return NewConfigured(provider, names, baseURL, key, log, ChatOptions{StrictProxy: &raw})
 }
 
 type strictProxyTransport struct {

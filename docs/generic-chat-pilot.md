@@ -1,6 +1,6 @@
 # Single-instance generic Chat pilot
 
-This is a loopback-only pilot for one operator-configured OpenAI-compatible **Chat** connection. It exposes the configured models, supports explicit JSON and SSE Chat, and does not need the Dashboard. It is off by default. It is not 9router parity: this slice does not implement native VolceAPI, Responses, Messages, proxy pools, fallback, custom headers, or usage settlement.
+This is a loopback-only pilot for one operator-configured OpenAI-compatible **Chat** connection. It exposes the configured models, supports explicit JSON and SSE Chat, and does not need the Dashboard. It is off by default. It is not 9router parity: this slice does not implement native VolceAPI, Responses, Messages, proxy pools, fallback, or usage settlement.
 
 Use a trusted local host. Loopback and exact Host checks are not user authentication; do not publish this pilot through a reverse proxy. The destination is one operator-approved HTTPS origin and path with normal TLS verification. The inlet cannot choose the upstream. The pilot does not use ambient proxy settings, follow redirects, or replay an attempt.
 
@@ -33,6 +33,29 @@ an explicit SSE preference was supplied, the pilot preserves that JSON response.
 It does not convert JSON to SSE or aggregate SSE into JSON; explicit mismatches
 are rejected. This is a local compatibility boundary, not a claim of response
 transformation parity with 9router.
+
+## Optional outbound headers for the fixed origin
+
+Set `GO_ROUTER_GENERIC_CHAT_HEADERS_JSON` in the local operator-managed startup
+environment, for example `{"X-Tenant":"tenant-a","User-Agent":"my-gateway"}`.
+Do not put secret values in command arguments, shell history, or the node
+configuration. Header values are not exposed in the model catalog, readiness
+check or dispatch journal. Changing the startup snapshot requires a restart.
+Unset means no override; an explicit object is required when set, and supplying
+it without the generic Chat pilot is an error.
+
+Only configured values go to the fixed HTTPS origin; requests cannot supply
+them and they are not sent in proxy CONNECT. In particular auth, Host,
+Accept/Accept-Encoding, framing, hop-by-hop, proxy, cookie and forwarding
+identity headers cannot be overridden. Invalid or reserved entries refuse
+startup rather than being silently dropped. The JSON object is limited to
+16 KiB and 16 entries with valid HTTP token names (max 128 bytes), printable
+ASCII string values (max 2 KiB), and an 8 KiB total header budget. Outer spaces
+are trimmed; an explicit User-Agent cannot be empty. Exact repeated keys are
+rejected; with distinct case spellings only the last value is sent, matching
+the case-insensitive override in 9router `39a793a2`. The Go pilot does
+not support environment interpolation; placeholders starting with `${`
+are rejected, never resolved or sent literally.
 
 ## Optional strict egress for this generic Chat connection
 
@@ -73,8 +96,7 @@ content and unrelated extension values remain intact. For generic OpenAI-compati
 use the pinned executor’s schema instruction and `json_object` fallback.
 Ordinary OpenAI tool-call correlation follows the pinned identifier and
 missing-result rules for supported inputs. The router never executes tools or
-creates new calls. Custom headers and unbounded/malformed inputs are outside
-this slice.
+creates new calls. Unbounded/malformed inputs are outside this slice.
 
 ## Offline acceptance
 

@@ -63,12 +63,22 @@ func main() {
 		config = newLocalConfiguration(*configPath, key)
 	}
 	inference := server.New(*addr)
-	if *genericBase != "" || *genericProvider != "" || *genericModels != "" || *genericJournal != "" {
+	genericEnabled := *genericBase != "" || *genericProvider != "" || *genericModels != "" || *genericJournal != ""
+	headers, headersConfigured := os.LookupEnv("GO_ROUTER_GENERIC_CHAT_HEADERS_JSON")
+	if headersConfigured && !genericEnabled {
+		logger.Error("generic Chat outbound headers require the generic Chat pilot")
+		os.Exit(1)
+	}
+	if genericEnabled {
+		var headersJSON *string
+		if headersConfigured {
+			headersJSON = &headers
+		}
 		if *syntheticDir != "" || *configPath != "" || *adminAddr != "" || *nodeID != "" {
 			logger.Error("generic Chat cannot be combined with synthetic, node configuration or management modes")
 			os.Exit(1)
 		}
-		pilot, cleanup, err := prepareGenericChat(*addr, *genericProvider, *genericModels, *genericBase, *genericJournal)
+		pilot, cleanup, err := prepareGenericChat(*addr, *genericProvider, *genericModels, *genericBase, *genericJournal, headersJSON)
 		if err != nil {
 			logger.Error("invalid generic Chat configuration", "err", err)
 			os.Exit(1)

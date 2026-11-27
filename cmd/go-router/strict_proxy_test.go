@@ -23,6 +23,7 @@ import (
 
 // Test only a fixed local tunnel: never dial an address supplied by a client.
 func TestGenericStrictProxyProcess(t *testing.T) {
+	const fixtureHeaders = `{"X-Fixture-Account":"old","x-fixture-account":"dedicated","User-Agent":"go-router-fixture"}`
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "router")
 	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, ".")
@@ -36,8 +37,12 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		upstream.Add(1)
 		if r.Method != "POST" || r.URL.Path != "/v1/chat/completions" ||
 			r.Header.Get("Authorization") != "Bearer fixture-key" || r.Header.Get("Proxy-Authorization") != "" ||
-			r.Header.Get("Cookie") != "" {
-			t.Error("invalid upstream method/path or credential isolation")
+			r.Header.Get("Cookie") != "" || r.Header.Get("Content-Type") != "application/json" ||
+			r.Header.Get("Accept-Encoding") != "identity" ||
+			r.UserAgent() != "go-router-fixture" ||
+			strings.Join(r.Header.Values("X-Fixture-Account"), ",") != "dedicated" ||
+			r.Header.Get("X-Ingress-Only") != "" {
+			t.Error("invalid upstream method/path, headers or credential isolation")
 			w.WriteHeader(400)
 			return
 		}
@@ -75,8 +80,10 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tunnels.Add(1)
 		if r.Method != "CONNECT" || r.Host != target.Host || r.Header.Get("Proxy-Authorization") != "" ||
-			r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
-			t.Error("invalid CONNECT method/target or leaked credential")
+			r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" ||
+			r.Header.Get("X-Fixture-Account") != "" || r.UserAgent() == "go-router-fixture" ||
+			r.Header.Get("X-Ingress-Only") != "" {
+			t.Error("invalid CONNECT method/target or leaked origin/ingress header")
 			w.WriteHeader(400)
 			return
 		}
@@ -154,7 +161,7 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, Timeout: 5 * time.Second}
-	run := func(t *testing.T, proxyURL, trustFile string, expectInvalid bool, use func(string)) {
+	runConfigured := func(t *testing.T, proxyURL, trustFile, headerConfig, expectedErr string, use func(string)) {
 		t.Helper()
 		temp := t.TempDir()
 		journal := filepath.Join(temp, "journal")
@@ -174,12 +181,12 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, binary, "-addr", addr, "-generic-chat-provider", "custom", "-generic-chat-base-url", origin.URL+"/v1", "-generic-chat-models", "one", "-generic-chat-journal", journal)
-		cmd.Env = []string{"GO_ROUTER_GENERIC_CHAT_KEY=fixture-key", "GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL=" + proxyURL, "SSL_CERT_FILE=" + trustFile, "SSL_CERT_DIR=" + emptyTrustDir, "HTTPS_PROXY=" + trap.URL, "HTTP_PROXY=" + trap.URL, "NO_PROXY=*"}
+		cmd.Env = []string{"GO_ROUTER_GENERIC_CHAT_KEY=fixture-key", "GO_ROUTER_GENERIC_CHAT_HEADERS_JSON=" + headerConfig, "GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL=" + proxyURL, "SSL_CERT_FILE=" + trustFile, "SSL_CERT_DIR=" + emptyTrustDir, "HTTPS_PROXY=" + trap.URL, "HTTP_PROXY=" + trap.URL, "NO_PROXY=*"}
 		var logs bytes.Buffer
 		cmd.Stdout = &logs
 		cmd.Stderr = &logs
-		if expectInvalid {
-			if err := cmd.Run(); err == nil || ctx.Err() != nil || !strings.Contains(logs.String(), errConfigMessage) || strings.Contains(logs.String(), "sentinel-secret") {
+		if expectedErr != "" {
+			if err := cmd.Run(); err == nil || ctx.Err() != nil || !strings.Contains(logs.String(), expectedErr) || strings.Contains(logs.String(), "sentinel-secret") {
 				t.Errorf("invalid configuration did not fail safely")
 			}
 			return
@@ -205,6 +212,14 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		}
 		use(gateway)
 	}
+	run := func(t *testing.T, proxyURL, trustFile string, expectInvalid bool, use func(string)) {
+		t.Helper()
+		var expectedErr string
+		if expectInvalid {
+			expectedErr = errConfigMessage
+		}
+		runConfigured(t, proxyURL, trustFile, fixtureHeaders, expectedErr, use)
+	}
 	post := func(t *testing.T, gateway string, stream bool) *http.Response {
 		t.Helper()
 		req, err := http.NewRequest("POST", gateway+"/v1/chat/completions", strings.NewReader(`{"model":"custom/one","stream":`+strconv.FormatBool(stream)+`}`))
@@ -215,6 +230,8 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		req.Header.Set("Proxy-Authorization", "Basic untrusted")
 		req.Header.Set("Authorization", "Bearer inbound")
 		req.Header.Set("Cookie", "foreign=1")
+		req.Header.Set("X-Fixture-Account", "forged")
+		req.Header.Set("X-Ingress-Only", "do not forward")
 		r, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -330,6 +347,26 @@ func TestGenericStrictProxyProcess(t *testing.T) {
 		}
 		if upstream.Load() != u || tunnels.Load() != n || ambient.Load() != 0 {
 			t.Fatal("invalid configuration made a request")
+		}
+	})
+
+	t.Run("headers do not enable pilot or leak config", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binary)
+		cmd.Env = []string{"GO_ROUTER_GENERIC_CHAT_HEADERS_JSON=" + fixtureHeaders}
+		out, err := cmd.CombinedOutput()
+		if err == nil || ctx.Err() != nil ||
+			!bytes.Contains(out, []byte("outbound headers require the generic Chat pilot")) ||
+			bytes.Contains(out, []byte("dedicated")) {
+			t.Fatal("outbound header config did not fail closed or was logged")
+		}
+
+		u, n := upstream.Load(), tunnels.Load()
+		runConfigured(t, proxy.URL, ca, `{"accEPT-encoding":"sentinel-secret"}`,
+			"invalid generic Chat outbound header configuration", nil)
+		if upstream.Load() != u || tunnels.Load() != n || ambient.Load() != 0 {
+			t.Fatal("invalid header configuration made a request")
 		}
 	})
 }
