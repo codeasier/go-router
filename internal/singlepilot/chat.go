@@ -79,8 +79,8 @@ func routesWithHeaders(provider string, names []string, baseURL, key string, log
 	}
 	specs := make([]catalog.ModelSpec, 0, len(names))
 	for _, name := range names {
-		if len(provider)+1+len(name) > 128 {
-			return nil, errors.New("catalog ID exceeds journal limit")
+		if !attemptlog.ValidRouteIDs(provider, provider+"/"+name, provider) {
+			return nil, errors.New("generic Chat route ID cannot be recorded in the journal")
 		}
 		if key != "" && strings.Contains(provider+"/"+name, key) {
 			return nil, errors.New("provider credential overlaps with a public model ID")

@@ -13,7 +13,7 @@ go-router -addr 127.0.0.1:20128 -generic-chat-provider custom \
   -generic-chat-journal "$HOME/go-router-chat-journal"
 ```
 
-The base path is used as written, with `/chat/completions` appended; include `/v1` if required. Do not put a credential in the URL or model IDs. The inbound model ID is `custom/example-model` and the upstream model ID is `example-model`. This mode is separate from synthetic, reloadable node configuration, and the management listener. `/readyz` reports local readiness, not an upstream credential or availability probe.
+The base path is used as written, with `/chat/completions` appended; include `/v1` if required. Do not put a credential in the URL or model IDs. Provider names and qualified model IDs must satisfy the dispatch journal ID rules; for example, `@` is not supported. Invalid configured routes prevent startup rather than making a listed model fail on dispatch. The inbound model ID is `custom/example-model` and the upstream model ID is `example-model`. This mode is separate from synthetic, reloadable node configuration, and the management listener. `/readyz` reports local readiness, not an upstream credential or availability probe.
 
 The dispatch journal is required: its intent is persisted before forwarding a request. A recorded intent without a complete application result does not prove successful upstream execution. A failed or interrupted stream is not automatically retried. An upstream 429 returns a sanitized JSON 429 before any stream begins, without forwarding the provider error body or retry headers. A full journal refuses new dispatch; this pilot does not rotate or delete records.
 
