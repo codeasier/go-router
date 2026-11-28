@@ -35,6 +35,7 @@ func TestChatDispatch(t *testing.T) {
 		{"SSE", `{"model":"custom/a","stream":true}`, "text/event-stream", chunk + "data: [DONE]\n\n", "[DONE]", 200, 200, 1, false, false},
 		{"interrupted SSE", `{"model":"custom/a","stream":true}`, "text/event-stream", chunk, chunk, 200, 200, 1, false, false},
 		{"external redirect", `{"model":"custom/a"}`, "application/json", "sensitive-refused", "invalid upstream", 502, 307, 1, false, false},
+		{"upstream rate limit", `{"model":"custom/a"}`, "application/json", "sensitive-refused", "upstream rate limited", 429, 429, 1, false, false},
 		{"upstream timeout", `{"model":"custom/a"}`, "application/json", "", "upstream timeout", 504, 0, 1, false, true},
 		{"journal refused", `{"model":"custom/a"}`, "application/json", "", "journal unavailable", 503, 0, 0, true, false},
 		{"wrong model", `{"model":"custom/b"}`, "application/json", "", "unknown model", 404, 0, 0, false, false},
@@ -66,17 +67,13 @@ func TestChatDispatch(t *testing.T) {
 			if tc.timeout {
 				deadline = 30 * time.Millisecond
 			}
-			c, err := Generic("custom", []string{"a"}, "https://provider.invalid/v1/", "fixture")
-			if err != nil {
-				t.Fatal(err)
-			}
-			h, err := routes(journalFunc(func(in attemptlog.Intent) error {
+			h, err := routes("custom", []string{"a"}, "https://provider.invalid/v1/", "fixture", journalFunc(func(in attemptlog.Intent) error {
 				intent = &in
 				if tc.refuse {
 					return errors.New("unavailable")
 				}
 				return nil
-			}), transport, deadline, c)
+			}), transport, deadline)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -97,13 +94,9 @@ func TestChatDispatch(t *testing.T) {
 }
 
 func TestChatCanceledBeforeDispatch(t *testing.T) {
-	c, err := Generic("custom", []string{"a"}, "https://provider.invalid", "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := routes(
+	h, err := routes("custom", []string{"a"}, "https://provider.invalid", "fixture",
 		journalFunc(func(attemptlog.Intent) error { t.Fatal("recorded canceled request"); return nil }),
-		roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("dispatched canceled request"); return nil, nil }), time.Second, c)
+		roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("dispatched canceled request"); return nil, nil }), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +108,15 @@ func TestChatCanceledBeforeDispatch(t *testing.T) {
 }
 
 func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
-	generic, err := Generic("custom", []string{"same-model"}, "https://provider.invalid/v1", "custom-secret")
+	headerConfig := `{"X-Tenant":"wrong","x-tenant":" operator-generic ","User-Agent":"generic-fixture-agent"}`
+	generic, err := GenericConfigured("custom", []string{"same-model"}, "https://provider.invalid/v1", "custom-secret", &headerConfig)
+	headerConfig = `{"X-Tenant":"cannot-change-snapshot"}`
 	if err != nil {
 		t.Fatal(err)
 	}
 	var intent attemptlog.Intent
 	calls := 0
-	h, err := routes(journalFunc(func(in attemptlog.Intent) error { intent = in; return nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	h, err := connectionRoutes(journalFunc(func(in attemptlog.Intent) error { intent = in; return nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -130,7 +125,13 @@ func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
 		if intent.BodyDigest != sha256.Sum256(data) {
 			t.Fatal("digest did not match")
 		}
+		if r.Header.Get("X-Caller") != "" {
+			t.Fatal("inlet headers crossed route boundary")
+		}
 		if calls == 1 {
+			if r.Header.Get("X-Tenant") != "" || r.Header.Get("User-Agent") != "" {
+				t.Fatal("generic operator headers reached Volce")
+			}
 			if r.URL.String() != openaichat.VolceChatBaseURL+"/chat/completions" || r.Header.Get("Authorization") != "Bearer volce-secret" ||
 				r.Header.Get("Accept") != "text/event-stream" || strings.Contains(string(data), `"stream"`) ||
 				!strings.Contains(string(data), `"temperature":1`) || intent.Model != "volceapi/kimi-k3" {
@@ -138,6 +139,9 @@ func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
 			}
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}},
 				Body: io.NopCloser(strings.NewReader(`data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"y"}}]}` + "\n\ndata: [DONE]\n\n"))}, nil
+		}
+		if r.Header.Get("X-Tenant") != "operator-generic" || r.Header.Get("User-Agent") != "generic-fixture-agent" {
+			t.Fatal("generic operator snapshot missing")
 		}
 		if r.URL.String() != "https://provider.invalid/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer custom-secret" ||
 			!strings.Contains(string(data), `"temperature":0.5`) || intent.Model != "custom/same-model" {
@@ -157,6 +161,9 @@ func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
 	for _, tc := range []struct{ model, media string }{{"volceapi/kimi-k3", "text/event-stream"}, {"custom/same-model", "application/json"}} {
 		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"`+tc.model+`","temperature":0.5}`))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Tenant", "incoming-tenant")
+		req.Header.Set("X-Caller", "private-input")
+		req.Header.Set("User-Agent", "caller")
 		res := httptest.NewRecorder()
 		h.ServeHTTP(res, req)
 		if res.Code != 200 || res.Header().Get("Content-Type") != tc.media {

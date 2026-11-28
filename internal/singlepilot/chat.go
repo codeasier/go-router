@@ -1,4 +1,4 @@
-// Package singlepilot wires configured Chat adapters into single-node inference.
+// Package singlepilot wires configured generic and native Chat connections into single-node inference.
 package singlepilot
 
 import (
@@ -24,23 +24,69 @@ type journal interface {
 	RecordIntent(attemptlog.Intent) error
 }
 
-type prepared interface {
-	NewRequest(context.Context, string) (*http.Request, error)
-	BodyDigest() [32]byte
-	Decode(context.Context, *http.Response, func([]byte) error) (openaichat.Observation, error)
+// New serves one operator-configured Chat connection with an immutable catalog
+// and no fallback or retry. The caller owns the listener and journal lifetime.
+func New(provider string, names []string, baseURL, key string, log journal) (http.Handler, error) {
+	return routes(provider, names, baseURL, key, log, chatTransport(), 30*time.Second)
+}
+
+// ChatOptions is an explicit operator snapshot. A nil value leaves its
+// feature disabled; present-but-empty configuration is not a fallback.
+type ChatOptions struct {
+	StrictProxy *string
+	HeadersJSON *string
+}
+
+func (ChatOptions) String() string   { return "generic Chat options (redacted)" }
+func (ChatOptions) GoString() string { return "generic Chat options (redacted)" }
+
+// NewConfigured selects headers and transport for the same fixed Chat
+// connection. No request, model or client header may modify these options.
+func NewConfigured(provider string, names []string, baseURL, key string, log journal, options ChatOptions) (http.Handler, error) {
+	c, err := GenericConfigured(provider, names, baseURL, key, options.HeadersJSON)
+	if err != nil {
+		return nil, err
+	}
+	var transport http.RoundTripper
+	if options.StrictProxy != nil {
+		proxy, err := strictProxyOrigin(*options.StrictProxy)
+		if err != nil {
+			return nil, err
+		}
+		transport = newStrictProxyTransport(proxy, strictProxySetupTimeout)
+	} else {
+		transport = chatTransport()
+	}
+	return connectionRoutes(log, transport, 30*time.Second, c)
 }
 
 // Connection is an immutable operator-defined Chat connection.
 type Connection struct {
 	id, key string
 	models  []string
-	prepare func(model string, body []byte, accept string) (prepared, bool, error)
+	headers map[string]string
+	prepare func(string, *openaichat.ParsedRequest, []string) (*openaichat.Prepared, error)
 }
 
 func (Connection) String() string     { return "Chat connection (redacted)" }
 func (c Connection) GoString() string { return c.String() }
 
+// Generic builds a connection without optional outbound headers.
 func Generic(provider string, names []string, baseURL, key string) (Connection, error) {
+	return GenericConfigured(provider, names, baseURL, key, nil)
+}
+
+// GenericConfigured parses an operator header snapshot belonging exclusively
+// to this fixed generic connection. Native connections cannot opt into it.
+func GenericConfigured(provider string, names []string, baseURL, key string, headersJSON *string) (Connection, error) {
+	var headers map[string]string
+	if headersJSON != nil {
+		var err error
+		headers, err = parseCustomHeaders(*headersJSON)
+		if err != nil {
+			return Connection{}, err
+		}
+	}
 	if strings.EqualFold(provider, "openrouter") || strings.EqualFold(provider, "volceapi") {
 		return Connection{}, errors.New("reserved provider ID")
 	}
@@ -48,34 +94,26 @@ func Generic(provider string, names []string, baseURL, key string) (Connection, 
 	if err != nil {
 		return Connection{}, err
 	}
-	return Connection{provider, key, append([]string(nil), names...), func(model string, body []byte, _ string) (prepared, bool, error) {
-		p, err := adapter.Prepare(model, body)
-		if err != nil {
-			return nil, false, err
-		}
-		return p, p.Streaming(), nil
-	}}, nil
+	return Connection{id: provider, key: key, models: append([]string(nil), names...), headers: headers, prepare: adapter.PrepareParsed}, nil
 }
 
 func Volce(names []string, key string) Connection {
-	return Connection{"volceapi", key, append([]string(nil), names...), func(model string, body []byte, accept string) (prepared, bool, error) {
-		p, err := openaichat.PrepareVolceChat(model, body, accept)
-		if err != nil {
-			return nil, false, err
-		}
-		return p, p.Streaming(), nil
-	}}
+	return Connection{id: "volceapi", key: key, models: append([]string(nil), names...), prepare: openaichat.PrepareVolceParsed}
 }
 
-// New mounts selected Chat connections without fallback or retry. The caller
-// owns the listener and the journal lifetime.
-func New(log journal, connections ...Connection) (http.Handler, error) {
-	t := &http.Transport{DisableKeepAlives: true, DisableCompression: true,
-		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 32 << 10}
-	return routes(log, t, 30*time.Second, connections...)
+func NewConnections(log journal, connections ...Connection) (http.Handler, error) {
+	return connectionRoutes(log, chatTransport(), 30*time.Second, connections...)
 }
 
-func routes(log journal, transport http.RoundTripper, timeout time.Duration, connections ...Connection) (http.Handler, error) {
+func routes(provider string, names []string, baseURL, key string, log journal, transport http.RoundTripper, timeout time.Duration) (http.Handler, error) {
+	c, err := Generic(provider, names, baseURL, key)
+	if err != nil {
+		return nil, err
+	}
+	return connectionRoutes(log, transport, timeout, c)
+}
+
+func connectionRoutes(log journal, transport http.RoundTripper, timeout time.Duration, connections ...Connection) (http.Handler, error) {
 	if log == nil || transport == nil || len(connections) == 0 || len(connections) > 16 || timeout <= 0 {
 		return nil, errors.New("invalid Chat connections")
 	}
@@ -88,8 +126,8 @@ func routes(log journal, transport http.RoundTripper, timeout time.Duration, con
 		models := make([]catalog.ModelSpec, 0, len(c.models))
 		for _, name := range c.models {
 			id := c.id + "/" + name
-			if len(id) > 128 {
-				return nil, errors.New("catalog ID exceeds journal limit")
+			if !attemptlog.ValidRouteIDs(c.id, id, c.id) {
+				return nil, errors.New("configured Chat route ID cannot be recorded in the journal")
 			}
 			for _, candidate := range connections {
 				if candidate.key != "" && strings.Contains(id, candidate.key) {
@@ -98,7 +136,11 @@ func routes(log journal, transport http.RoundTripper, timeout time.Duration, con
 			}
 			models = append(models, catalog.ModelSpec{ID: name})
 		}
-		probe, _, err := c.prepare(c.models[0], []byte("{}"), "application/json")
+		parsed, err := openaichat.ParseClientRequest([]byte(`{"model":"startup"}`))
+		if err != nil {
+			return nil, err
+		}
+		probe, err := c.prepare(c.models[0], parsed, []string{"application/json"})
 		if err != nil {
 			return nil, err
 		}
@@ -152,18 +194,20 @@ func routes(log journal, transport http.RoundTripper, timeout time.Duration, con
 			}
 			return
 		}
-		modelID, err := openaichat.InputModel(body)
+		// Check structure before lookup, then apply the real route's model and
+		// stream negotiation once, before recording intent or dispatching.
+		input, err := openaichat.ParseClientRequest(body)
 		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
 		}
-		model, err := registry.Lookup(modelID)
+		model, err := registry.Lookup(input.Model())
 		if err != nil {
 			reject(w, 404, "unknown model")
 			return
 		}
 		connection := byID[model.ProviderID]
-		request, stream, err := connection.prepare(model.Name, body, strings.Join(r.Header.Values("Accept"), ","))
+		request, err := connection.prepare(model.Name, input, r.Header.Values("Accept"))
 		if err != nil {
 			reject(w, 400, "invalid Chat body")
 			return
@@ -174,6 +218,12 @@ func routes(log journal, transport http.RoundTripper, timeout time.Duration, con
 		if err != nil {
 			reject(w, 503, "upstream configuration unavailable")
 			return
+		}
+		// Apply only the selected route's operator snapshot, only to its
+		// origin request. Native routes have no generic header snapshot;
+		// the transport never consumes it as CONNECT headers either.
+		for name, value := range connection.headers {
+			outbound.Header.Set(name, value)
 		}
 		outbound.Header.Set("Accept-Encoding", "identity")
 		var nonce [16]byte
@@ -199,25 +249,25 @@ func routes(log journal, transport http.RoundTripper, timeout time.Duration, con
 			return
 		}
 		started := false
-		_, err = request.Decode(ctx, response, func(data []byte) error {
+		observation, err := request.DecodeMedia(ctx, response, func(media string, data []byte) error {
 			if !started {
 				w.Header().Set("Cache-Control", "no-store")
-				if stream {
-					w.Header().Set("Content-Type", "text/event-stream")
-				} else {
-					w.Header().Set("Content-Type", "application/json")
-				}
+				w.Header().Set("Content-Type", media)
 				started = true
 			}
 			if _, err := w.Write(data); err != nil {
 				return err
 			}
-			if stream {
+			if media == "text/event-stream" {
 				return http.NewResponseController(w).Flush()
 			}
 			return nil
 		})
 		if err != nil && !started {
+			if ctx.Err() == nil && errors.Is(err, openaichat.ErrHTTPStatus) && observation.HTTPStatus == http.StatusTooManyRequests {
+				reject(w, http.StatusTooManyRequests, "upstream rate limited")
+				return
+			}
 			upstreamFailure(w, ctx, err)
 		}
 		// An interrupted stream ends without a fabricated [DONE] or a second call.

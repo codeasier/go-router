@@ -133,8 +133,14 @@ func validID(s string) bool {
 	return !strings.Contains(s, "://")
 }
 
+// ValidRouteIDs reports whether routing metadata is representable in a dispatch
+// intent. Callers can validate configured routes without writing a probe.
+func ValidRouteIDs(provider, model, connection string) bool {
+	return validID(provider) && validID(model) && validID(connection)
+}
+
 func (in Intent) valid() bool {
-	return validID(in.RequestID) && validID(in.AttemptID) && validID(in.Provider) && validID(in.Model) && validID(in.ConnectionID) && validID(in.Operation)
+	return validID(in.RequestID) && validID(in.AttemptID) && ValidRouteIDs(in.Provider, in.Model, in.ConnectionID) && validID(in.Operation)
 }
 
 func lineFor(r Record) []byte {

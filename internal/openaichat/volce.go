@@ -1,9 +1,9 @@
 package openaichat
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
-	"net/http"
+
 	"strings"
 )
 
@@ -12,30 +12,17 @@ import (
 // Per-request and per-connection URL overrides are not part of this provider.
 const VolceChatBaseURL = "https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1"
 
-// VolceChatRequest is a prepared native Chat request (not a Messages or
-// Responses translator). The transport and exactly-one dispatch are owned by
-// the caller. It retains no credential.
-type VolceChatRequest struct{ *Prepared }
-
-// PrepareVolceChat takes the catalog-selected upstream model and original
-// client Accept, never a client-selected endpoint. Missing stream remains
-// absent on the wire, even when negotiation selects SSE.
-func PrepareVolceChat(model string, source []byte, accept string) (*VolceChatRequest, error) {
+// PrepareVolceParsed takes a catalog-selected upstream model. Missing stream
+// stays absent on the wire; a schema is passed through without being rewritten
+// into the generic executor's system prompt.
+func PrepareVolceParsed(model string, input *ParsedRequest, accept []string) (*Prepared, error) {
 	a := Adapter{endpoint: VolceChatBaseURL + "/chat/completions"}
-	p, err := a.Prepare(model, source)
-	if err != nil {
-		return nil, err
-	}
-	fields, ok := requestFields(p.body)
-	if !ok {
-		return nil, ErrRequest
-	}
-	if fields["stream"] == nil {
-		p.stream = !strings.Contains(accept, "application/json") || strings.Contains(accept, "text/event-stream")
-	}
-	if !p.stream {
-		delete(fields, "stream_options")
-	}
+	return a.prepareChat(model, input, accept, func(fields map[string]json.RawMessage) error {
+		return applyVolceModel(model, fields)
+	})
+}
+
+func applyVolceModel(model string, fields map[string]json.RawMessage) error {
 	if strings.Contains(strings.ToLower(model), "claude") {
 		delete(fields, "temperature")
 	}
@@ -49,61 +36,90 @@ func PrepareVolceChat(model string, source []byte, accept string) (*VolceChatReq
 	if v := fields["messages"]; (kimi || deepseek) && v != nil {
 		var messages []json.RawMessage
 		if json.Unmarshal(v, &messages) != nil {
-			return nil, ErrRequest
+			return ErrRequest
 		}
 		changed := false
 		for i, raw := range messages {
-			var msg map[string]json.RawMessage
-			if json.Unmarshal(raw, &msg) != nil || msg == nil {
-				continue
-			}
-			var role, prior string
-			if json.Unmarshal(msg["role"], &role) != nil || role != "assistant" {
-				continue
-			}
-			if json.Unmarshal(msg["reasoning_content"], &prior) == nil && prior != "" {
-				continue
-			}
-			if kimi {
-				var calls []json.RawMessage
-				if json.Unmarshal(msg["tool_calls"], &calls) != nil || len(calls) == 0 {
-					continue
-				}
-			}
-			msg["reasoning_content"] = json.RawMessage(`" "`)
-			messages[i], err = json.Marshal(msg)
+			msg, edit, err := volceReasoningMessage(raw, kimi)
 			if err != nil {
-				return nil, ErrRequest
+				return err
 			}
+			if !edit {
+				continue
+			}
+			messages[i] = msg
 			changed = true
 		}
 		if changed {
+			var err error
 			fields["messages"], err = json.Marshal(messages)
 			if err != nil {
-				return nil, ErrRequest
+				return ErrRequest
 			}
 		}
 	}
-	p.body, err = json.Marshal(fields)
-	if err != nil || len(p.body) > maxRequest {
-		return nil, ErrRequest
-	}
-	return &VolceChatRequest{p}, nil
+	return nil
 }
 
-// Streaming returns the negotiated wire mode, which can differ from the
-// presence of the stream key in the request body.
-func (v *VolceChatRequest) Streaming() bool { return v.Prepared.stream }
-
-// NewRequest omits the provider Accept override for JSON. It does not emit
-// caller headers, follow redirects or open a connection.
-func (v *VolceChatRequest) NewRequest(ctx context.Context, key string) (*http.Request, error) {
-	if v == nil || v.Prepared == nil {
-		return nil, ErrRequest
+// Only splice the one selected member. Re-decoding every key into a Go map
+// would collapse distinct extension keys containing escaped UTF-16 code units.
+func volceReasoningMessage(raw json.RawMessage, kimi bool) (json.RawMessage, bool, error) {
+	if len(raw) == 0 || raw[0] != '{' {
+		return raw, false, nil
 	}
-	r, err := v.Prepared.NewRequest(ctx, key)
-	if err == nil && !v.Streaming() {
-		r.Header.Del("Accept")
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := d.Token(); err != nil {
+		return nil, false, ErrRequest
 	}
-	return r, err
+	var role, prior string
+	var calls []json.RawMessage
+	var seenRole, seenCalls, seenPrior bool
+	start, end := 0, 0
+	for d.More() {
+		k, err := d.Token()
+		var val json.RawMessage
+		if err != nil || d.Decode(&val) != nil {
+			return nil, false, ErrRequest
+		}
+		switch k {
+		case "role":
+			if seenRole {
+				return nil, false, ErrRequest
+			}
+			seenRole = true
+			_ = json.Unmarshal(val, &role)
+		case "tool_calls":
+			if seenCalls {
+				return nil, false, ErrRequest
+			}
+			seenCalls = true
+			_ = json.Unmarshal(val, &calls)
+		case "reasoning_content":
+			if seenPrior {
+				return nil, false, ErrRequest
+			}
+			seenPrior = true
+			_ = json.Unmarshal(val, &prior)
+			end = int(d.InputOffset())
+			start = end - len(val)
+		}
+	}
+	if _, err := d.Token(); err != nil {
+		return nil, false, ErrRequest
+	}
+	if role != "assistant" || prior != "" || (kimi && len(calls) == 0) {
+		return raw, false, nil
+	}
+	replacement := []byte(`" "`)
+	if !seenPrior {
+		start = int(d.InputOffset()) - 1
+		end = start
+		// A matched assistant object already contains its role member.
+		replacement = []byte(`,"reasoning_content":" "`)
+	}
+	out := make([]byte, 0, len(raw)+len(replacement))
+	out = append(out, raw[:start]...)
+	out = append(out, replacement...)
+	out = append(out, raw[end:]...)
+	return out, true, nil
 }

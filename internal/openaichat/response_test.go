@@ -45,6 +45,46 @@ func testPrepared(t *testing.T, stream bool) *Prepared {
 	return p
 }
 
+func TestNegotiatedMediaRejectsAmbiguousOrUnexpectedReplies(t *testing.T) {
+	a, err := New("https://fixture.invalid/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, body    string
+		accept, media []string
+		wantWire      string
+	}{
+		{"duplicate Content-Type on implicit mode", "{}", nil, []string{"application/json", "text/event-stream"}, "text/event-stream"},
+		{"no Content-Type on implicit mode", "{}", nil, nil, "text/event-stream"},
+		{"HTML on implicit mode", "{}", nil, []string{"text/html"}, "text/event-stream"},
+		{"SSE refused on requested JSON", "{}", []string{"application/json"}, []string{"text/event-stream"}, "*/*"},
+		{"SSE refused on explicit false", `{"stream":false}`, []string{"text/event-stream"}, []string{"text/event-stream"}, "*/*"},
+		{"JSON refused on split Accept with SSE", "{}", []string{"application/json", "text/event-stream"}, []string{"application/json"}, "text/event-stream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := a.PrepareWithAccept("test", []byte(tc.body), tc.accept)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := p.NewRequest(context.Background(), "fixture")
+			if err != nil || req.Header.Get("Accept") != tc.wantWire {
+				t.Fatalf("unexpected outbound mode: %v", err)
+			}
+			defer req.Body.Close()
+			body := &countedBody{Reader: strings.NewReader("do not emit")}
+			res := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": tc.media}, Body: body}
+			got, err := p.DecodeMedia(context.Background(), res, func(media string, data []byte) error {
+				t.Fatal("unexpected payload delivery")
+				return nil
+			})
+			if !errors.Is(err, ErrInvalidResponse) || got.Complete || body.closes != 1 {
+				t.Fatalf("mismatch was not rejected safely: %+v, %v, closes %d", got, err, body.closes)
+			}
+		})
+	}
+}
+
 func TestOfflineCustomProviderFixture(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -184,7 +224,7 @@ func TestLocalDispatcherIllustratesIntentBeforeSingleWire(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil || r.URL.Path != "/team/v1/chat/completions" || r.URL.RawQuery != "" ||
 			r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer offline-only" ||
-			r.Header.Get("Accept") != "application/json" || r.Header.Get("Cookie") != "" {
+			r.Header.Get("Accept") != "text/event-stream" || r.Header.Get("Cookie") != "" {
 			http.Error(w, "invalid fixture request", 400)
 			return
 		}

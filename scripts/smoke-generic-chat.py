@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
     )
     subprocess.run([binary, "-init-generic-chat-journal", str(journal)], check=True, env={})
     calls = []
+    observed_modes = []
     canceled = threading.Event()
 
     class Fixture(BaseHTTPRequestHandler):
@@ -37,10 +38,14 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         def do_POST(self):
             assert self.path == "/v1/chat/completions"
             assert self.headers["Authorization"] == "Bearer fixture-upstream-key"
+            assert self.headers.get_all("X-Review-Tenant") == ["operator"]
+            assert self.headers.get_all("User-Agent") == ["review-agent"]
+            assert self.headers.get("X-Review-Ingress") is None
             assert self.headers.get("Cookie") is None
             assert self.headers["Accept-Encoding"] == "identity"
             raw = self.rfile.read(int(self.headers["Content-Length"]))
-            model = json.loads(raw)["model"]
+            payload = json.loads(raw)
+            model = payload["model"]
             records = (journal / "dispatch-intents.v1").read_bytes().splitlines()
             assert records[0] == b"go-router/dispatch-intents/v1"
             digest, record = records[-1].split(b"\t", 1)
@@ -49,12 +54,39 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
             assert intent["model"] == f"custom/{model}"
             assert bytes(intent["body_digest"]) == hashlib.sha256(raw).digest()
             calls.append(model)
+            if model == "tool-repair":
+                assistant, tool, continuation = payload["messages"]
+                assert assistant["tool_calls"][0]["id"] == "call_msg0_tc0_f"
+                assert tool == {"role": "tool", "tool_call_id": "call_msg0_tc0_f", "content": ""}
+                assert continuation == {"role": "user", "content": "after"}
+            if model == "schema":
+                assert payload["response_format"] == {"type": "json_object"}
+                assert payload["messages"][0]["role"] == "system"
+                assert '\n```json\n{\n  "type": "object"\n}\n```\n' in payload["messages"][0]["content"]
+                assert payload["messages"][1] == {"role": "user", "content": "hello"}
+            if model == "normalized":
+                assert payload["messages"] == [
+                    {"role": "system", "content": "rules"}, {"role": "user", "content": "hello"}]
+                assert "tools" not in payload and "stream_options" not in payload
             if model == "redirect":
                 self.send_response(307)
                 self.send_header("Location", "/must-not-follow")
                 self.end_headers()
                 return
-            stream = json.loads(raw).get("stream", False)
+            if model == "limited":
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-After", "30")
+                self.end_headers()
+                self.wfile.write(b'{"error":"opaque-provider-detail"}')
+                return
+            accepts = self.headers.get_all("Accept")
+            observed_modes.append((payload, accepts))
+            assert accepts in (["text/event-stream"], ["*/*"]), accepts
+            stream = accepts == ["text/event-stream"]
+            if model == "json-only":
+                stream = False  # A compatible upstream may use only the JSON body field.
+
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream" if stream else "application/json")
             self.end_headers()
@@ -86,10 +118,10 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
 
     args = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-provider", "custom",
             "-generic-chat-base-url", f"https://127.0.0.1:{peer.server_port}/v1",
-            "-generic-chat-models", "success,interrupt,redirect,cancel", "-generic-chat-journal", str(journal),
-            "-volce-chat-models", "kimi-k3"]
-    env = {"GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
-           "HTTPS_PROXY": "http://127.0.0.1:1", "GO_ROUTER_VOLCE_CHAT_KEY": "unused-volce-fixture"}
+            "-generic-chat-models", "success,interrupt,redirect,cancel,limited,json-only,normalized,schema,tool-repair", "-generic-chat-journal", str(journal), "-volce-chat-models", "kimi-k3"]
+    env = {"GO_ROUTER_VOLCE_CHAT_KEY": "unused-fixture-volce", "GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
+           "HTTPS_PROXY": "http://127.0.0.1:1",
+           "GO_ROUTER_GENERIC_CHAT_HEADERS_JSON": '{"X-Review-Tenant":"old","x-review-tenant":" operator ","User-Agent":"review-agent"}'}
     bad = args.copy()
     bad[2] = f"0.0.0.0:{port}"
     assert subprocess.run(bad, env=env, timeout=2, stdout=subprocess.DEVNULL).returncode != 0
@@ -102,14 +134,23 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
             else:
                 conn.request("POST", path, json.dumps(body),
                              {"Content-Type": "application/json", "Cookie": "foreign",
-                              "Authorization": "Bearer client-key"})
+                              "Authorization": "Bearer client-key", "User-Agent": "caller",
+                              "X-Review-Tenant": "inbound", "X-Review-Ingress": "inbound", **(headers or {})})
             res = conn.getresponse()
             return res.status, res.getheader("Content-Type"), res.read()
         finally:
             conn.close()
 
-    missing_key = {k: v for k, v in env.items() if k != "GO_ROUTER_VOLCE_CHAT_KEY"}
-    assert subprocess.run(args, env=missing_key, timeout=2, stdout=subprocess.DEVNULL).returncode != 0
+    # A generic-only proxy setting may not silently enable direct native egress.
+    for proxy in ("", "http://127.0.0.1:1"):
+        assert subprocess.run(args, env={**env, "GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL": proxy},
+                              timeout=2, stdout=subprocess.DEVNULL).returncode != 0
+    assert subprocess.run(args, env={k:v for k,v in env.items() if k != "GO_ROUTER_VOLCE_CHAT_KEY"},
+                          timeout=2, stdout=subprocess.DEVNULL).returncode != 0
+    native_only = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-journal", str(journal),
+                   "-volce-chat-models", "kimi-k3"]
+    none = subprocess.run(native_only, env=env, timeout=2, capture_output=True)
+    assert none.returncode != 0 and b"outbound headers require the generic Chat pilot" in none.stdout
     process = subprocess.Popen(args, env=env)
     try:
         deadline = time.monotonic() + 5
@@ -126,17 +167,67 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert call("/healthz")[0] == 200
         assert call("/v1/models", headers={"Origin": "https://unrelated.invalid"})[0] == 403
         assert [m["id"] for m in json.loads(call("/v1/models")[2])["data"]] == [
-            "custom/cancel", "custom/interrupt", "custom/redirect", "custom/success", "volceapi/kimi-k3"]
+            "custom/cancel", "custom/interrupt", "custom/json-only", "custom/limited", "custom/normalized", "custom/redirect", "custom/schema", "custom/success", "custom/tool-repair", "volceapi/kimi-k3"]
         chat = "/v1/chat/completions"
-        code, media, body = call(chat, {"model": "custom/success"})
-        assert code == 200 and media == "application/json" and b"fixture" in body
-        code, media, body = call(chat, {"model": "custom/success", "stream": True})
-        assert code == 200 and media == "text/event-stream" and body.endswith(b"data: [DONE]\n\n")
+        # Pinned 9router ordinary OpenAI client/non-force-stream generic provider.
+        # Values are expectations, independently of the upstream fixture.
+        accepts = [None, "*/*", "application/json", "text/event-stream",
+                   "application/json, text/event-stream", "application/json; q=0"]
+        matrix = [
+            (None, [True, True, False, True, True, False]),
+            (True, [True] * len(accepts)),
+            (False, [False] * len(accepts)),
+        ]
+        for field, modes in matrix:
+            for accept, wants_sse in zip(accepts, modes, strict=True):
+                body_fields = {} if field is None else {"stream": field}
+                headers = {} if accept is None else {"Accept": accept}
+                code, media, body = call(chat, {"model": "custom/success", **body_fields}, headers)
+                assert observed_modes[-1] == ({"model": "success", **body_fields},
+                                              ["text/event-stream" if wants_sse else "*/*"])
+                assert code == 200
+                if wants_sse:
+                    assert media == "text/event-stream" and body.endswith(b"data: [DONE]\n\n")
+                else:
+                    assert media == "application/json" and json.loads(body)["object"] == "chat.completion"
+
+        # The wire still prefers SSE on omission. Without an explicit SSE
+        # requirement the local pilot preserves an actual, validated JSON reply.
+        code, media, body = call(chat, {"model": "custom/json-only"})
+        assert observed_modes[-1] == ({"model": "json-only"}, ["text/event-stream"])
+        assert code == 200 and media == "application/json" and json.loads(body)["object"] == "chat.completion"
+        for body_fields, headers in [({"stream": True}, {}), ({}, {"Accept": "text/event-stream"})]:
+            code, media, body = call(chat, {"model": "custom/json-only", **body_fields}, headers)
+            assert code == 502 and media == "application/json"
+            assert json.loads(body) == {"error": {"message": "invalid upstream response"}}
         code, _, body = call(chat, {"model": "custom/interrupt", "stream": True})
         assert code == 200 and b"fixture" in body and b"[DONE]" not in body
         assert call(chat, {"model": "custom/redirect"})[0] == 502
-        assert call(chat, {"model": "custom/missing"})[0] == 404
+        for stream in [False, True]:
+            code, media, body = call(chat, {"model": "custom/limited", "stream": stream})
+            assert code == 429 and media == "application/json"
+            assert json.loads(body) == {"error": {"message": "upstream rate limited"}}
+        assert call(chat, {
+            "model": "custom/normalized", "stream": False, "tools": [],
+            "stream_options": {"include_usage": True},
+            "messages": [{"role": "developer", "content": "rules"}, {"role": "user", "content": "hello"}],
+        })[0] == 200
+        assert call(chat, {
+            "model": "custom/schema", "stream": False,
+            "response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "object"}}},
+            "messages": [{"role": "user", "content": "hello"}],
+        })[0] == 200
+        assert call(chat, {
+            "model": "custom/tool-repair", "stream": False,
+            "messages": [
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"type": "function", "function": {"name": "f", "arguments": "{}"}},
+                ]},
+                {"role": "user", "content": "after"},
+            ],
+        })[0] == 200
         assert call(chat, {"model": "volceapi/not-configured"})[0] == 404
+        assert call(chat, {"model": "custom/missing"})[0] == 404
         with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
             raw = b'{"model":"custom/cancel","stream":true}'
             conn.sendall(
@@ -150,7 +241,8 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
                 received.extend(part)
             conn.shutdown(socket.SHUT_RDWR)
         assert canceled.wait(3), "upstream connection remained open after downstream cancel"
-        assert calls == ["success", "success", "interrupt", "redirect", "cancel"]
+        assert calls == ["success"] * (len(accepts) * len(matrix)) + ["json-only"] * 3 + [
+            "interrupt", "redirect", "limited", "limited", "normalized", "schema", "tool-repair", "cancel"]
     finally:
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
@@ -158,4 +250,4 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         peer.shutdown()
         peer.server_close()
     assert process.returncode == 0
-    print("generic Chat: loopback-only, two-provider catalog, authenticated TLS JSON/SSE, journal-first, truncation, cancellation and no redirect PASS")
+    print("generic Chat: loopback-only, catalog, authenticated TLS, 18 Chat negotiation cases, implicit JSON fallback, journal-first, truncation, rate limit, cancellation and no redirect PASS")
