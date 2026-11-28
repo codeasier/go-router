@@ -38,6 +38,9 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         def do_POST(self):
             assert self.path == "/v1/chat/completions"
             assert self.headers["Authorization"] == "Bearer fixture-upstream-key"
+            assert self.headers.get_all("X-Review-Tenant") == ["operator"]
+            assert self.headers.get_all("User-Agent") == ["review-agent"]
+            assert self.headers.get("X-Review-Ingress") is None
             assert self.headers.get("Cookie") is None
             assert self.headers["Accept-Encoding"] == "identity"
             raw = self.rfile.read(int(self.headers["Content-Length"]))
@@ -115,9 +118,10 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
 
     args = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-provider", "custom",
             "-generic-chat-base-url", f"https://127.0.0.1:{peer.server_port}/v1",
-            "-generic-chat-models", "success,interrupt,redirect,cancel,limited,json-only,normalized,schema,tool-repair", "-generic-chat-journal", str(journal)]
-    env = {"GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
-           "HTTPS_PROXY": "http://127.0.0.1:1"}
+            "-generic-chat-models", "success,interrupt,redirect,cancel,limited,json-only,normalized,schema,tool-repair", "-generic-chat-journal", str(journal), "-volce-chat-models", "kimi-k3"]
+    env = {"GO_ROUTER_VOLCE_CHAT_KEY": "unused-fixture-volce", "GO_ROUTER_GENERIC_CHAT_KEY": "fixture-upstream-key", "SSL_CERT_FILE": str(cert),
+           "HTTPS_PROXY": "http://127.0.0.1:1",
+           "GO_ROUTER_GENERIC_CHAT_HEADERS_JSON": '{"X-Review-Tenant":"old","x-review-tenant":" operator ","User-Agent":"review-agent"}'}
     bad = args.copy()
     bad[2] = f"0.0.0.0:{port}"
     assert subprocess.run(bad, env=env, timeout=2, stdout=subprocess.DEVNULL).returncode != 0
@@ -130,12 +134,23 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
             else:
                 conn.request("POST", path, json.dumps(body),
                              {"Content-Type": "application/json", "Cookie": "foreign",
-                              "Authorization": "Bearer client-key", **(headers or {})})
+                              "Authorization": "Bearer client-key", "User-Agent": "caller",
+                              "X-Review-Tenant": "inbound", "X-Review-Ingress": "inbound", **(headers or {})})
             res = conn.getresponse()
             return res.status, res.getheader("Content-Type"), res.read()
         finally:
             conn.close()
 
+    # A generic-only proxy setting may not silently enable direct native egress.
+    for proxy in ("", "http://127.0.0.1:1"):
+        assert subprocess.run(args, env={**env, "GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL": proxy},
+                              timeout=2, stdout=subprocess.DEVNULL).returncode != 0
+    assert subprocess.run(args, env={k:v for k,v in env.items() if k != "GO_ROUTER_VOLCE_CHAT_KEY"},
+                          timeout=2, stdout=subprocess.DEVNULL).returncode != 0
+    native_only = [binary, "-addr", f"127.0.0.1:{port}", "-generic-chat-journal", str(journal),
+                   "-volce-chat-models", "kimi-k3"]
+    none = subprocess.run(native_only, env=env, timeout=2, capture_output=True)
+    assert none.returncode != 0 and b"outbound headers require the generic Chat pilot" in none.stdout
     process = subprocess.Popen(args, env=env)
     try:
         deadline = time.monotonic() + 5
@@ -152,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
         assert call("/healthz")[0] == 200
         assert call("/v1/models", headers={"Origin": "https://unrelated.invalid"})[0] == 403
         assert [m["id"] for m in json.loads(call("/v1/models")[2])["data"]] == [
-            "custom/cancel", "custom/interrupt", "custom/json-only", "custom/limited", "custom/normalized", "custom/redirect", "custom/schema", "custom/success", "custom/tool-repair"]
+            "custom/cancel", "custom/interrupt", "custom/json-only", "custom/limited", "custom/normalized", "custom/redirect", "custom/schema", "custom/success", "custom/tool-repair", "volceapi/kimi-k3"]
         chat = "/v1/chat/completions"
         # Pinned 9router ordinary OpenAI client/non-force-stream generic provider.
         # Values are expectations, independently of the upstream fixture.
@@ -211,6 +226,7 @@ with tempfile.TemporaryDirectory(prefix="go-router-generic-") as tmp:
                 {"role": "user", "content": "after"},
             ],
         })[0] == 200
+        assert call(chat, {"model": "volceapi/not-configured"})[0] == 404
         assert call(chat, {"model": "custom/missing"})[0] == 404
         with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
             raw = b'{"model":"custom/cancel","stream":true}'

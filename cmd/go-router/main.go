@@ -26,7 +26,8 @@ func main() {
 	genericBase := flag.String("generic-chat-base-url", "", "enable one operator-configured HTTPS Chat upstream; numeric loopback -addr only")
 	genericProvider := flag.String("generic-chat-provider", "", "generic provider namespace")
 	genericModels := flag.String("generic-chat-models", "", "comma-separated upstream model IDs")
-	genericJournal := flag.String("generic-chat-journal", "", "existing private dispatch journal for generic Chat")
+	genericJournal := flag.String("generic-chat-journal", "", "existing private dispatch journal for the Chat pilot")
+	volceModels := flag.String("volce-chat-models", "", "enable VolceAPI native Chat with these comma-separated upstream models")
 	initJournal := flag.String("init-synthetic-journal", "", "exclusively initialize a journal in an existing absolute private directory and exit")
 	initChatJournal := flag.String("init-generic-chat-journal", "", "exclusively initialize a generic Chat journal and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -63,24 +64,24 @@ func main() {
 		config = newLocalConfiguration(*configPath, key)
 	}
 	inference := server.New(*addr)
-	genericEnabled := *genericBase != "" || *genericProvider != "" || *genericModels != "" || *genericJournal != ""
+	genericEnabled := *genericBase != "" || *genericProvider != "" || *genericModels != ""
 	headers, headersConfigured := os.LookupEnv("GO_ROUTER_GENERIC_CHAT_HEADERS_JSON")
 	if headersConfigured && !genericEnabled {
 		logger.Error("generic Chat outbound headers require the generic Chat pilot")
 		os.Exit(1)
 	}
-	if genericEnabled {
+	if genericEnabled || *volceModels != "" || *genericJournal != "" {
 		var headersJSON *string
 		if headersConfigured {
 			headersJSON = &headers
 		}
 		if *syntheticDir != "" || *configPath != "" || *adminAddr != "" || *nodeID != "" {
-			logger.Error("generic Chat cannot be combined with synthetic, node configuration or management modes")
+			logger.Error("provider Chat cannot be combined with synthetic, node configuration or management modes")
 			os.Exit(1)
 		}
-		pilot, cleanup, err := prepareGenericChat(*addr, *genericProvider, *genericModels, *genericBase, *genericJournal, headersJSON)
+		pilot, cleanup, err := prepareProviderChat(*addr, *genericProvider, *genericModels, *genericBase, *volceModels, *genericJournal, headersJSON)
 		if err != nil {
-			logger.Error("invalid generic Chat configuration", "err", err)
+			logger.Error("invalid provider Chat configuration", "err", err)
 			os.Exit(1)
 		}
 		inference = pilot

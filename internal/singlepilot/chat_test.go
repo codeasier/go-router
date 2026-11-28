@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/codeasier/go-router/internal/attemptlog"
+	"github.com/codeasier/go-router/internal/openaichat"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -104,4 +105,72 @@ func TestChatCanceledBeforeDispatch(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"custom/a"}`)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestVolceAndGenericShareCatalogWithoutSharingCredentials(t *testing.T) {
+	headerConfig := `{"X-Tenant":"wrong","x-tenant":" operator-generic ","User-Agent":"generic-fixture-agent"}`
+	generic, err := GenericConfigured("custom", []string{"same-model"}, "https://provider.invalid/v1", "custom-secret", &headerConfig)
+	headerConfig = `{"X-Tenant":"cannot-change-snapshot"}`
+	if err != nil {
+		t.Fatal(err)
+	}
+	var intent attemptlog.Intent
+	calls := 0
+	h, err := connectionRoutes(journalFunc(func(in attemptlog.Intent) error { intent = in; return nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if intent.BodyDigest != sha256.Sum256(data) {
+			t.Fatal("digest did not match")
+		}
+		if r.Header.Get("X-Caller") != "" {
+			t.Fatal("inlet headers crossed route boundary")
+		}
+		if calls == 1 {
+			if r.Header.Get("X-Tenant") != "" || r.Header.Get("User-Agent") != "" {
+				t.Fatal("generic operator headers reached Volce")
+			}
+			if r.URL.String() != openaichat.VolceChatBaseURL+"/chat/completions" || r.Header.Get("Authorization") != "Bearer volce-secret" ||
+				r.Header.Get("Accept") != "text/event-stream" || strings.Contains(string(data), `"stream"`) ||
+				!strings.Contains(string(data), `"temperature":1`) || intent.Model != "volceapi/kimi-k3" {
+				t.Fatal("wrong Volce connection or wire")
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(`data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"y"}}]}` + "\n\ndata: [DONE]\n\n"))}, nil
+		}
+		if r.Header.Get("X-Tenant") != "operator-generic" || r.Header.Get("User-Agent") != "generic-fixture-agent" {
+			t.Fatal("generic operator snapshot missing")
+		}
+		if r.URL.String() != "https://provider.invalid/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer custom-secret" ||
+			!strings.Contains(string(data), `"temperature":0.5`) || intent.Model != "custom/same-model" {
+			t.Fatal("wrong generic connection or wire")
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"y"}}]}`))}, nil
+	}), time.Second, generic, Volce([]string{"kimi-k3"}, "volce-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := httptest.NewRecorder()
+	h.ServeHTTP(models, httptest.NewRequest("GET", "/v1/models", nil))
+	if !strings.Contains(models.Body.String(), "volceapi/kimi-k3") || !strings.Contains(models.Body.String(), "custom/same-model") {
+		t.Fatal("incomplete model listing")
+	}
+	for _, tc := range []struct{ model, media string }{{"volceapi/kimi-k3", "text/event-stream"}, {"custom/same-model", "application/json"}} {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"`+tc.model+`","temperature":0.5}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Tenant", "incoming-tenant")
+		req.Header.Set("X-Caller", "private-input")
+		req.Header.Set("User-Agent", "caller")
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != 200 || res.Header().Get("Content-Type") != tc.media {
+			t.Fatalf("%s: %d %q", tc.model, res.Code, res.Body.String())
+		}
+	}
+	if calls != 2 {
+		t.Fatal("dispatch count", calls)
+	}
 }

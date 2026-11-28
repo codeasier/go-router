@@ -165,6 +165,12 @@ func (a *Adapter) PrepareWithAccept(model string, source []byte, accept []string
 // The inbound Accept is used only to select a mode, never forwarded. Matching
 // is literal substring matching as in the pinned baseline, not RFC q ranking.
 func (a *Adapter) PrepareParsed(model string, p *ParsedRequest, accept []string) (*Prepared, error) {
+	return a.prepareChat(model, p, accept, applyGenericChatSchemaFallback)
+}
+
+// Common OpenAI Chat routing and wire negotiation. A native provider chooses
+// its own executor transform; structured-output fallback is generic-only.
+func (a *Adapter) prepareChat(model string, p *ParsedRequest, accept []string, transform func(map[string]json.RawMessage) error) (*Prepared, error) {
 	if a == nil || a.endpoint == "" || p == nil || p.fields == nil ||
 		model == "" || len(model) > 512 || strings.TrimSpace(model) != model ||
 		!utf8.ValidString(model) || strings.ContainsFunc(model, unicode.IsControl) {
@@ -187,7 +193,7 @@ func (a *Adapter) PrepareParsed(model string, p *ParsedRequest, accept []string)
 	if err := applyGenericChatToolCorrelation(fields); err != nil {
 		return nil, err
 	}
-	if err := applyGenericChatSchemaFallback(fields); err != nil {
+	if err := transform(fields); err != nil {
 		return nil, err
 	}
 	fields["model"], _ = json.Marshal(model)
