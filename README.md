@@ -35,6 +35,7 @@ curl http://127.0.0.1:20128/healthz
 
 ## Documentation
 
+- [Single-instance generic Chat pilot](docs/generic-chat-pilot.md)
 - [Goals and success criteria](docs/GOALS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)

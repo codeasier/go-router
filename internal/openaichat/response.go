@@ -39,6 +39,17 @@ type Observation struct {
 // data frames, synchronously. An error after an SSE frame means an incomplete
 // stream, not authority to start another upstream request.
 func (p *Prepared) Decode(ctx context.Context, response *http.Response, emit func([]byte) error) (Observation, error) {
+	if emit == nil {
+		return p.DecodeMedia(ctx, response, nil)
+	}
+	return p.DecodeMedia(ctx, response, func(_ string, data []byte) error { return emit(data) })
+}
+
+// DecodeMedia additionally tells the dispatcher the validated media type. A
+// provider that defaults an omitted stream field to JSON may return JSON to an
+// ordinary client that did not request SSE. Do not invent chunks, transcode,
+// or retry; explicit modes continue to reject mismatched responses.
+func (p *Prepared) DecodeMedia(ctx context.Context, response *http.Response, emit func(string, []byte) error) (Observation, error) {
 	var out Observation
 	if response == nil {
 		return out, ErrInvalidResponse
@@ -61,15 +72,21 @@ func (p *Prepared) Decode(ctx context.Context, response *http.Response, emit fun
 		return out, ErrInvalidResponse
 	}
 	media, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || (p.stream && media != "text/event-stream") || (!p.stream && media != "application/json") {
+	acceptSSE := media == "text/event-stream" && p.stream
+	acceptJSON := media == "application/json" && (!p.stream || p.allowImplicitJSON)
+	if err != nil || (!acceptSSE && !acceptJSON) {
 		return out, ErrInvalidResponse
 	}
 
+	var sink func([]byte) error
+	if emit != nil {
+		sink = func(data []byte) error { return emit(media, data) }
+	}
 	var usage *Usage
-	if p.stream {
-		usage, err = decodeStream(ctx, response.Body, emit)
+	if media == "text/event-stream" {
+		usage, err = decodeStream(ctx, response.Body, sink)
 	} else {
-		usage, err = decodeJSON(ctx, response.Body, emit)
+		usage, err = decodeJSON(ctx, response.Body, sink)
 	}
 	if err != nil {
 		return out, err

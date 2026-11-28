@@ -23,19 +23,28 @@ func main() {
 	nodeID := flag.String("node-id", "", "stable, non-secret node ID for the management listener")
 	configPath := flag.String("config", "", "optional local node metadata JSON; reload with SIGHUP on Unix")
 	syntheticDir := flag.String("synthetic-journal", "", "opt in to local synthetic Chat using an initialized private journal directory; requires -config and numeric loopback -addr")
-	initJournal := flag.String("init-synthetic-journal", "", "exclusively initialize a synthetic journal in an existing absolute private directory and exit")
+	genericBase := flag.String("generic-chat-base-url", "", "enable one operator-configured HTTPS Chat upstream; numeric loopback -addr only")
+	genericProvider := flag.String("generic-chat-provider", "", "generic provider namespace")
+	genericModels := flag.String("generic-chat-models", "", "comma-separated upstream model IDs")
+	genericJournal := flag.String("generic-chat-journal", "", "existing private dispatch journal for generic Chat")
+	initJournal := flag.String("init-synthetic-journal", "", "exclusively initialize a journal in an existing absolute private directory and exit")
+	initChatJournal := flag.String("init-generic-chat-journal", "", "exclusively initialize a generic Chat journal and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if *initJournal != "" {
+	if *initJournal != "" || *initChatJournal != "" {
+		dir := *initJournal
+		if *initChatJournal != "" {
+			dir = *initChatJournal
+		}
 		if flag.NFlag() != 1 || flag.NArg() != 0 {
 			logger.Error("journal initialization is a standalone operation")
 			os.Exit(1)
 		}
-		j, err := attemptlog.Create(*initJournal)
+		j, err := attemptlog.Create(dir)
 		if err != nil || j.Close() != nil {
-			logger.Error("could not initialize synthetic journal")
+			logger.Error("could not initialize dispatch journal")
 			os.Exit(1)
 		}
 		return
@@ -54,6 +63,19 @@ func main() {
 		config = newLocalConfiguration(*configPath, key)
 	}
 	inference := server.New(*addr)
+	if *genericBase != "" || *genericProvider != "" || *genericModels != "" || *genericJournal != "" {
+		if *syntheticDir != "" || *configPath != "" || *adminAddr != "" || *nodeID != "" {
+			logger.Error("generic Chat cannot be combined with synthetic, node configuration or management modes")
+			os.Exit(1)
+		}
+		pilot, cleanup, err := prepareGenericChat(*addr, *genericProvider, *genericModels, *genericBase, *genericJournal)
+		if err != nil {
+			logger.Error("invalid generic Chat configuration", "err", err)
+			os.Exit(1)
+		}
+		inference = pilot
+		defer cleanup()
+	}
 	if *syntheticDir != "" {
 		var cleanup func()
 		var err error
