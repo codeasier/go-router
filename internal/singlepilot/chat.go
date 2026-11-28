@@ -31,7 +31,45 @@ func New(provider string, names []string, baseURL, key string, log journal) (htt
 	return routes(provider, names, baseURL, key, log, chatTransport(), 30*time.Second)
 }
 
+// ChatOptions is an explicit operator snapshot. A nil value leaves its
+// feature disabled; present-but-empty configuration is not a fallback.
+type ChatOptions struct {
+	StrictProxy *string
+	HeadersJSON *string
+}
+
+func (ChatOptions) String() string   { return "generic Chat options (redacted)" }
+func (ChatOptions) GoString() string { return "generic Chat options (redacted)" }
+
+// NewConfigured selects headers and transport for the same fixed Chat
+// connection. No request, model or client header may modify these options.
+func NewConfigured(provider string, names []string, baseURL, key string, log journal, options ChatOptions) (http.Handler, error) {
+	var headers map[string]string
+	if options.HeadersJSON != nil {
+		var err error
+		headers, err = parseCustomHeaders(*options.HeadersJSON)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var transport http.RoundTripper
+	if options.StrictProxy != nil {
+		proxy, err := strictProxyOrigin(*options.StrictProxy)
+		if err != nil {
+			return nil, err
+		}
+		transport = newStrictProxyTransport(proxy, strictProxySetupTimeout)
+	} else {
+		transport = chatTransport()
+	}
+	return routesWithHeaders(provider, names, baseURL, key, log, transport, 30*time.Second, headers)
+}
+
 func routes(provider string, names []string, baseURL, key string, log journal, transport http.RoundTripper, timeout time.Duration) (http.Handler, error) {
+	return routesWithHeaders(provider, names, baseURL, key, log, transport, timeout, nil)
+}
+
+func routesWithHeaders(provider string, names []string, baseURL, key string, log journal, transport http.RoundTripper, timeout time.Duration, headers map[string]string) (http.Handler, error) {
 	if len(names) == 0 || len(names) > 128 || log == nil || strings.EqualFold(provider, "openrouter") || strings.EqualFold(provider, "volceapi") {
 		return nil, errors.New("invalid generic Chat connection")
 	}
@@ -123,6 +161,11 @@ func routes(provider string, names []string, baseURL, key string, log journal, t
 		if err != nil {
 			reject(w, 503, "upstream configuration unavailable")
 			return
+		}
+		// Only the TLS origin request gets this private startup snapshot.
+		// The transport does not take CONNECT headers from this map.
+		for name, value := range headers {
+			outbound.Header.Set(name, value)
 		}
 		outbound.Header.Set("Accept-Encoding", "identity")
 		var nonce [16]byte

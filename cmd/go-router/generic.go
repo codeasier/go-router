@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"net/http"
 	"os"
 	"strings"
 
@@ -11,7 +10,7 @@ import (
 	"github.com/codeasier/go-router/internal/singlepilot"
 )
 
-func prepareGenericChat(addr, provider, models, base, dir string) (*server.Server, func(), error) {
+func prepareGenericChat(addr, provider, models, base, dir string, headersJSON *string) (*server.Server, func(), error) {
 	if provider == "" || models == "" || base == "" || dir == "" || len(models) > 16<<10 {
 		return nil, nil, errors.New("generic Chat requires provider, models, endpoint and journal")
 	}
@@ -21,12 +20,11 @@ func prepareGenericChat(addr, provider, models, base, dir string) (*server.Serve
 	}
 	closeJournal := func() { _ = journal.Close() }
 	names, key := strings.Split(models, ","), os.Getenv("GO_ROUTER_GENERIC_CHAT_KEY")
-	var routes http.Handler
+	options := singlepilot.ChatOptions{HeadersJSON: headersJSON}
 	if proxy, configured := os.LookupEnv("GO_ROUTER_GENERIC_CHAT_STRICT_PROXY_URL"); configured {
-		routes, err = singlepilot.NewWithStrictProxy(provider, names, base, key, journal, proxy)
-	} else {
-		routes, err = singlepilot.New(provider, names, base, key, journal)
+		options.StrictProxy = &proxy
 	}
+	routes, err := singlepilot.NewConfigured(provider, names, base, key, journal, options)
 	if err != nil {
 		closeJournal()
 		return nil, nil, err
