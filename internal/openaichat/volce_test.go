@@ -104,3 +104,71 @@ func TestVolceReasoningSplicePreservesOpaqueExtensionKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestVolceDeepSeekToolNamesFollowPinnedDedup(t *testing.T) {
+	// Raw OpenAI tools: first exact name wins, preserving nested data, order
+	// and unnamed entries. The root name has precedence over function.name.
+	const first = `{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}},"extension":[2,1]}`
+	const duplicate = `{"type":"function","function":{"name":"l\u006fokup","description":"later"}}`
+	const upper = `{"type":"function","function":{"name":"Lookup"}}`
+	const noName = `{"type":"function","function":{"name":""},"opaque":true}`
+	const root = `{"type":"function","name":"lookup","function":{"name":"different"}}`
+	const fallback = `{"type":"function","name":"","function":{"name":"lookup"}}`
+	const order = `{"type":"function","function":{"name":"other"}}`
+	const tools = first + "," + noName + "," + duplicate + "," + upper + "," + noName + "," + root + "," + fallback + "," + order
+	const unique = first + "," + noName + "," + upper + "," + noName + "," + order
+	src := []byte(`{"tools":[` + tools + `]}`)
+	for _, tc := range []struct {
+		name, model, want string
+		generic           bool
+	}{
+		{"native", "deepseek-v4", unique, false},
+		{"native last path component", "namespace/DeEpSeEk-v4", unique, false},
+		{"nonmatching last path component", "deepseek-v4/demo", tools, false},
+		{"contains but not prefix", "mini-deepseek-v4", tools, false},
+		{"Kimi", "kimi-k3", tools, false},
+		{"generic even with model prefix", "deepseek-v4", tools, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var p *Prepared
+			var err error
+			if tc.generic {
+				a, e := New("https://example.invalid/v1")
+				if e != nil {
+					t.Fatal(e)
+				}
+				p, err = a.Prepare(tc.model, src)
+			} else {
+				p, err = volceFixture(tc.model, src, "application/json")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			fields, ok := requestFields(p.body)
+			if !ok || string(fields["tools"]) != "["+tc.want+"]" {
+				t.Fatalf("unexpected tools on wire: %s", fields["tools"])
+			}
+		})
+	}
+}
+
+func TestVolceDeepSeekDedupKeepsOpaqueWireValues(t *testing.T) {
+	const first = `{"function":{"name":"😀"}}`
+	const same = `{"function":{"name":"\ud83d\ude00"}}`
+	const lone = `{"function":{"name":"\ud800"}}`
+	const replacement = `{"function":{"name":"\ufffd"}}`
+	const noName = `{"function":{"name":0}}`
+	const numeric = `{"name":1,"function":{"name":"fallback-not-used"}}`
+	const sameNumeric = `{"function":{"name":1.0}}`
+	const object = `{"name":{},"function":{"name":"fallback-not-used"}}`
+	const src = first + "," + same + "," + lone + "," + lone + "," + replacement + "," + noName + "," + noName + "," + numeric + "," + sameNumeric + "," + object + "," + object
+	const want = first + "," + lone + "," + replacement + "," + noName + "," + noName + "," + numeric + "," + object + "," + object
+	p, err := volceFixture("deepseek-v4", []byte(`{"tools":[`+src+`]}`), "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, ok := requestFields(p.body)
+	if !ok || string(fields["tools"]) != "["+want+"]" {
+		t.Fatalf("unexpected tools on wire: %s", fields["tools"])
+	}
+}

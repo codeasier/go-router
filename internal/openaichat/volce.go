@@ -3,7 +3,6 @@ package openaichat
 import (
 	"bytes"
 	"encoding/json"
-
 	"strings"
 )
 
@@ -18,6 +17,14 @@ const VolceChatBaseURL = "https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.vo
 func PrepareVolceParsed(model string, input *ParsedRequest, accept []string) (*Prepared, error) {
 	a := Adapter{endpoint: VolceChatBaseURL + "/chat/completions"}
 	return a.prepareChat(model, input, accept, func(fields map[string]json.RawMessage) error {
+		// The catalog admits only literal model IDs (no thinking suffix);
+		// its final path component is the native model family.
+		base := model[strings.LastIndexByte(model, '/')+1:]
+		if strings.HasPrefix(strings.ToLower(base), "deepseek-") {
+			if err := dedupeVolceToolNames(fields); err != nil {
+				return err
+			}
+		}
 		return applyVolceModel(model, fields)
 	})
 }
